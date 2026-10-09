@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "inline-qa",
+  "version": "0.1.0",
+  "description": "逐题学习，在原题区域继续追问。需连接随源码提供的 MCP 服务。",
+  "author": {
+    "name": "frostingg"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "题内问答",
+        "shortDescription": "在原题里追问，原位查看解答",
+        "longDescription": "将一组问题展示为互动题目卡片。各题单独保存追问和解答，界面直接调用后端工具，不向主聊天发送追问消息。源码版本需部署、配置模型服务并连接 MCP；仅安装 skill 无法启用交互。",
+        "developerName": "frostingg",
+        "category": "Education",
+        "capabilities": [
+          "Interactive"
+        ],
+        "defaultPrompt": "把下面的问题做成互动答题板，我要在每道题里面继续追问。"
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+CREATE TABLE qa_boards (owner TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(owner, id));
