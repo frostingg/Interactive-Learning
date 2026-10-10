@@ -45,3 +45,5 @@
 - 对应插件：https://chatgpt.com/plugins/plugin_asdk_app_sites_9d45976b1cb48191b1cad4d004c26d2c；安装工具返回 Already installed。
 - 当前会话未提供插件的新工具，未完成真实 Chat / Work 模型读请求、写回与组件显示的端到端测试。
 - 此自动生成的 App 插件暂不可通过 Plugin Creator 编辑（source reader 404）；skill 工作流保留在仓库，云端通过 MCP 工具说明提供对应约束，未声称云端已附加 skill。
+
+生产 MCP 直接探测：使用 Sites 提供的服务访问凭证请求发现、UI 资源与只读状态，均返回 HTTP 403（未返回 MCP JSON）。这不是通过 ChatGPT 插件的账户连接进行的调用，不能替代已登录 Chat / Work 的验证，也不能据此确认插件认证健康。保留私有访问与逐用户鉴权，未为探测放宽权限。
