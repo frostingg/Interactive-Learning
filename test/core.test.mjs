@@ -229,7 +229,7 @@ test('service status reports the native host and never requires an independent A
   assert.deepEqual((await service.call('service_status',{},'alice')).status,{
     version:VERSION,storageReady:true,answerProvider:'chatgpt-host',requiresApiKey:false
   });
-  assert.equal(VERSION,'0.3.0');
+  assert.equal(VERSION,'0.3.1');
   const unavailable=setup({status:()=>({storageReady:false})}).service;
   assert.equal((await unavailable.call('service_status',{},'alice')).status.storageReady,false);
 });
@@ -238,17 +238,19 @@ test('service status reports the native host and never requires an independent A
 test('MCP discovery supports 2026-07-28 and exposes host follow-up tools without another component',async()=>{
   const {service}=setup();const handler=createMcpHandler(service,'<html>widget</html>');
   const request=(method,params)=>new Request('http://localhost/mcp',{
-    method:'POST',headers:{'Content-Type':'application/json'},
+    method:'POST',headers:{'Content-Type':'application/json','MCP-Protocol-Version':'2026-07-28'},
     body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})
   });
   const rpc=async(method,params,owner=null)=>(await handler(request(method,params),owner)).json();
   const discovery=await rpc('server/discover');
   assert.deepEqual(discovery.result.supportedVersions,['2026-07-28']);
-  assert.deepEqual(discovery.result.capabilities,{tools:{}});
+  assert.deepEqual(discovery.result.capabilities,{tools:{},resources:{}});
+  assert.equal(discovery.result.resultType,'complete');
   const initialized=await rpc('initialize',{protocolVersion:'2026-07-28'});
   assert.equal(initialized.result.protocolVersion,'2026-07-28');
-  assert.equal(initialized.result.serverInfo.version,'0.3.0');
+  assert.equal(initialized.result.serverInfo.version,'0.3.1');
   const listed=await rpc('tools/list');
+  assert.equal(listed.result.resultType,'complete');
   const tools=listed.result.tools;
   assert.deepEqual(tools.map(tool=>tool.name).sort(),[
     'ask_card','create_board','get_board','get_card_request','open_board','service_status','submit_card_answer'
@@ -264,15 +266,20 @@ test('MCP discovery supports 2026-07-28 and exposes host follow-up tools without
     assert.equal(tools.find(tool=>tool.name===name)._meta.ui.resourceUri,UI_URI);
   }
   const resources=await rpc('resources/list');
+  assert.equal(resources.result.resultType,'complete');
   assert.equal(resources.result.resources[0].uri,UI_URI);
   const resource=await rpc('resources/read',{uri:UI_URI});
+  assert.equal(resource.result.resultType,'complete');
   assert.equal(resource.result.contents[0].mimeType,'text/html;profile=mcp-app');
   assert.equal(resource.result.contents[0].text,'<html>widget</html>');
   assert.deepEqual(resource.result.contents[0]._meta.ui.csp,{connectDomains:[],resourceDomains:[]});
+  assert.deepEqual(resource.result.contents[0]._meta['openai/ui'].availableDisplayModes,['inline','fullscreen']);
   assert.equal((await handler(request('tools/call',{name:'get_board',arguments:{boardId:'missing'}}),null)).status,401);
   const error=await rpc('tools/call',{name:'get_board',arguments:{boardId:'missing'}},'alice');
+  assert.equal(error.result.resultType,'complete');
   assert.equal(error.result.isError,true);
   const status=await rpc('tools/call',{name:'service_status',arguments:{}},'alice');
+  assert.equal(status.result.resultType,'complete');
   assert.equal(status.result.structuredContent.status.requiresApiKey,false);
   assert.equal(status.result.isError,undefined);
 });
@@ -283,11 +290,148 @@ test('MCP tool failure preserves the request and returns a retryable tool error'
   await queue(service,args,'我的问题');
   const handler=createMcpHandler(service,'<html/>');
   const request=new Request('http://localhost/mcp',{
-    method:'POST',headers:{'Content-Type':'application/json'},
+    method:'POST',headers:{'Content-Type':'application/json','MCP-Protocol-Version':'2026-07-28'},
     body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'submit_card_answer',arguments:{...args,answer:''}}})
   });
   const response=await (await handler(request,'alice')).json();
+  assert.equal(response.result.resultType,'complete');
   assert.equal(response.result.isError,true);
   assert.match(response.result.content[0].text,/不符合要求/);
   assert.equal((await readRequest(service,args)).request.state,'queued');
+});
+
+
+// Validate the JSON Schema keywords used by this dependency-free server.
+// Fail on an unsupported keyword rather than silently ignoring a constraint.
+function assertOutputSchema(schema,value,path='$') {
+  assert.ok(schema&&typeof schema==='object',path+': schema is required');
+  const allowed=new Set(['type','properties','required','additionalProperties','items','minItems','maxItems','minLength','maxLength','enum','const','minimum','maximum','pattern','description','title','$schema']);
+  for(const key of Object.keys(schema))assert.ok(allowed.has(key),path+': unsupported schema keyword '+key);
+  if(schema.enum)assert.ok(schema.enum.some(item=>Object.is(item,value)),path+': enum');
+  if('const' in schema)assert.deepEqual(value,schema.const,path+': const');
+  if(schema.type==='object') {
+    assert.ok(value&&typeof value==='object'&&!Array.isArray(value),path+': object');
+    const properties=schema.properties??{};
+    for(const key of schema.required??[])assert.ok(Object.hasOwn(value,key),path+'.'+key+': required');
+    for(const[key,item]of Object.entries(value)) {
+      if(properties[key])assertOutputSchema(properties[key],item,path+'.'+key);
+      else if(schema.additionalProperties===false)assert.fail(path+'.'+key+': unexpected property');
+      else if(schema.additionalProperties&&typeof schema.additionalProperties==='object')assertOutputSchema(schema.additionalProperties,item,path+'.'+key);
+    }
+  }else if(schema.type==='array') {
+    assert.ok(Array.isArray(value),path+': array');
+    if(schema.minItems!==undefined)assert.ok(value.length>=schema.minItems,path+': minItems');
+    if(schema.maxItems!==undefined)assert.ok(value.length<=schema.maxItems,path+': maxItems');
+    if(schema.items)value.forEach((item,index)=>assertOutputSchema(schema.items,item,path+'['+index+']'));
+  }else if(schema.type==='integer') {
+    assert.ok(Number.isInteger(value),path+': integer');
+  }else if(schema.type==='number') {
+    assert.equal(typeof value,'number',path+': number');assert.ok(Number.isFinite(value),path+': finite number');
+  }else if(schema.type==='string'||schema.type==='boolean') {
+    assert.equal(typeof value,schema.type,path+': '+schema.type);
+  }else if(schema.type==='null') {
+    assert.equal(value,null,path+': null');
+  }else {
+    assert.fail(path+': missing or unsupported schema type '+schema.type);
+  }
+  if(typeof value==='string') {
+    const length=Array.from(value).length;
+    if(schema.minLength!==undefined)assert.ok(length>=schema.minLength,path+': minLength');
+    if(schema.maxLength!==undefined)assert.ok(length<=schema.maxLength,path+': maxLength');
+    if(schema.pattern!==undefined)assert.match(value,new RegExp(schema.pattern),path+': pattern');
+  }
+  if(typeof value==='number') {
+    if(schema.minimum!==undefined)assert.ok(value>=schema.minimum,path+': minimum');
+    if(schema.maximum!==undefined)assert.ok(value<=schema.maximum,path+': maximum');
+  }
+}
+
+
+test('all seven tools return complete results conforming to their declared output schemas and JSON fallback',async()=>{
+  const {service}=setup();const handler=createMcpHandler(service,'<html>widget</html>');
+  let rpcId=0;
+  const rpc=async(method,params)=>{
+    const response=await handler(new Request('http://localhost/mcp',{
+      method:'POST',headers:{'Content-Type':'application/json','MCP-Protocol-Version':'2026-07-28'},
+      body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method,params})
+    }),'alice');
+    assert.equal(response.status,200);
+    const envelope=await response.json();
+    assert.equal(envelope.error,undefined);
+    assert.equal(envelope.result.resultType,'complete',method+': complete result');
+    return envelope.result;
+  };
+  const listed=await rpc('tools/list');
+  const definitions=new Map(listed.tools.map(tool=>[tool.name,tool]));
+  const required={
+    service_status:['status'],create_board:['board'],open_board:['board'],get_board:['board'],
+    ask_card:['boardId','cardId','request'],get_card_request:['boardId','cardId','request','card'],
+    submit_card_answer:['boardId','cardId','followup']
+  };
+  for(const[name,keys]of Object.entries(required)) {
+    const schema=definitions.get(name)?.outputSchema;
+    assert.equal(schema?.type,'object',name+': outputSchema object');
+    for(const key of keys)assert.ok(schema.required?.includes(key),name+': outputSchema requires '+key);
+  }
+  const called=new Set();
+  const call=async(name,args)=>{
+    const result=await rpc('tools/call',{name,arguments:args});
+    assert.equal(result.isError,undefined,name+': successful result');
+    assertOutputSchema(definitions.get(name).outputSchema,result.structuredContent,name);
+    const serialized=result.content.find(item=>item.type==='text'&&item.annotations?.audience?.includes('assistant')&&item.text.trim().startsWith('{'));
+    assert.ok(serialized,name+': assistant-visible JSON fallback');
+    assert.deepEqual(JSON.parse(serialized.text),result.structuredContent,name+': fallback matches structuredContent');
+    called.add(name);
+    return result.structuredContent;
+  };
+  const status=await call('service_status',{});
+  assert.equal(status.status.version,'0.3.1');
+  const created=await call('create_board',{title:'真实返回结构',cards});
+  const b=created.board,args=ids(b,1,'schema-followup');
+  assert.equal(b.cards.length,2);
+  assert.ok(b.cards.every(card=>!('pending' in card)));
+  await call('open_board',{boardId:b.id});
+  await call('get_board',{boardId:b.id});
+  assert.equal((await call('ask_card',{...args,question:'请解释这一步'})).request.state,'queued');
+  assert.equal((await call('get_card_request',args)).request.state,'queued');
+  const answer=await call('submit_card_answer',{...args,answer:'完整解答写回第二题。'});
+  assert.equal(answer.followup.answer,'完整解答写回第二题。');
+  const completed=await call('get_card_request',args);
+  assert.equal(completed.request.state,'completed');
+  assert.deepEqual(completed.followup,answer.followup);
+  const cached=await call('ask_card',{...args,question:'请解释这一步'});
+  assert.equal(cached.request.state,'completed');
+  assert.deepEqual(cached.followup,answer.followup);
+  const restored=await call('open_board',{boardId:b.id});
+  assert.deepEqual(restored.board.cards[1].followups,[answer.followup]);
+  assert.deepEqual([...called].sort(),Object.keys(required).sort());
+  await rpc('resources/read',{uri:UI_URI});
+  await rpc('resources/list');
+  await rpc('resources/templates/list');
+  await rpc('prompts/list');
+  await rpc('ping');
+});
+
+
+
+test('legacy MCP initialize and resource access stay compatible without a modern result discriminator',async()=>{
+  const {service}=setup();const handler=createMcpHandler(service,'<html>legacy widget</html>');
+  const rpc=async(method,params)=>{
+    const response=await handler(new Request('http://localhost/mcp',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})
+    }),'alice');
+    assert.equal(response.status,200);
+    const result=(await response.json()).result;
+    assert.equal(result.resultType,undefined,method+': legacy response');
+    return result;
+  };
+  const initialized=await rpc('initialize',{protocolVersion:'2025-03-26'});
+  assert.equal(initialized.protocolVersion,'2025-03-26');
+  assert.equal(initialized.serverInfo.version,'0.3.1');
+  const resource=await rpc('resources/read',{uri:UI_URI});
+  assert.equal(resource.contents[0].text,'<html>legacy widget</html>');
+  const status=await rpc('tools/call',{name:'service_status',arguments:{}});
+  assert.equal(status.structuredContent.status.version,'0.3.1');
+  assert.equal(status.isError,undefined);
 });

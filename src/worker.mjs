@@ -5,7 +5,7 @@ import {widgetHtml,demoHtml} from './generated-ui.mjs';
 export default {
   async fetch(request,env) {
     const url=new URL(request.url);
-    if(url.pathname==='/health') return Response.json({service:'inline-qa',version:'0.3.0'});
+    if(url.pathname==='/health') return Response.json({service:'inline-qa',version:'0.3.1'});
     if(url.pathname==='/mcp') {
       const owner=request.headers.get('oai-authenticated-user-id');
       if(!env.DB) return Response.json({error:'Storage unavailable'},{status:503});

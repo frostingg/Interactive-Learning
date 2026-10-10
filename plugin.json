@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "inline-qa",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "按需启用互动题卡，使用当前 ChatGPT 解答并写回原题，无需独立 API 密钥。",
   "author": {
     "name": "frostingg"

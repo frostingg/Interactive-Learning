@@ -2,7 +2,7 @@
 
 把十多道题放进一张互动答题板：每道题下面都有追问框，完整解答写回这一题的区域。
 
-**v0.3.0 使用当前 ChatGPT 会话生成初次答案和追问答案。插件后端只保存题板与追问，不调用独立模型 API，不需要 API 密钥。生成答案使用 ChatGPT 的正常用量，仍受你的套餐、账户和模式限制。** 部署与实际宿主测试状态见 [验证记录](VERIFICATION.md)，源码和离线演示不代表已经接入成功。
+**v0.3.1 使用当前 ChatGPT 会话生成初次答案和追问答案。插件后端只保存题板与追问，不调用独立模型 API，不需要 API 密钥。生成答案使用 ChatGPT 的正常用量，仍受你的套餐、账户和模式限制。** 部署与实际宿主测试状态见 [验证记录](VERIFICATION.md)，源码和离线演示不代表已经接入成功。
 
 个人私有插件已部署：[题内问答](https://chatgpt.com/plugins/plugin_asdk_app_sites_9d45976b1cb48191b1cad4d004c26d2c)。插件系统报告已安装到创建者账户。生产表 qa_boards 已创建；真实插件连接、创建3题并再次读取已验证成功，requiresApiKey=false。题卡点击、ChatGPT追问写回与界面原位更新仍待完成实测。打开插件入口后在需要时选择它，输入“把这些题做成互动答题板”。
 
@@ -91,3 +91,5 @@ test/core.test.mjs          核心行为检查
 - [互动 UI 与工具调用](https://developers.openai.com/plugins/build/chatgpt-ui)
 - [组件桥接与状态](https://developers.openai.com/plugins/reference)
 - [插件连接与测试](https://developers.openai.com/plugins/quickstart)
+
+0.3.1 界面接入修复：用户确认旧版本未显示互动题板。补齐 MCP 2026-07-28 resources 能力与 complete 回复标记，全部工具声明输出数据结构，界面资源声明 inline/fullscreen 显示方式，并保留结构化数据及 JSON 文本回退。18/18 核心检查通过；本地模拟宿主的逐题保存、刷新恢复、失败重试与移动布局仍通过。真实客户端显示尚待修复发布后确认，不能把服务端创建成功等同于题板可见。
