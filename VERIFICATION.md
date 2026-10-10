@@ -47,3 +47,5 @@
 - 此自动生成的 App 插件暂不可通过 Plugin Creator 编辑（source reader 404）；skill 工作流保留在仓库，云端通过 MCP 工具说明提供对应约束，未声称云端已附加 skill。
 
 生产 MCP 直接探测：使用 Sites 提供的服务访问凭证请求发现、UI 资源与只读状态，均返回 HTTP 403（未返回 MCP JSON）。这不是通过 ChatGPT 插件的账户连接进行的调用，不能替代已登录 Chat / Work 的验证，也不能据此确认插件认证健康。保留私有访问与逐用户鉴权，未为探测放宽权限。
+
+2026-10-10：在用户选择“题内问答”后，本会话实际加载了插件工具。通过真实 ChatGPT 插件连接验证：service_status 返回 storageReady=true、answerProvider=chatgpt-host、requiresApiKey=false；当前版本0.3.0。create_board 保存3道数学测试题成功，get_board再次读取的题目与答案完全一致。get_card_request读取不存在的追问返回isError，未写入解答。当前自动界面操作工具因Windows sandbox setup错误启动失败；卡片点击、组件消息触发模型、回答写回与目视原位更新仍等待一次用户点击验证。

@@ -4,7 +4,7 @@
 
 **v0.3.0 使用当前 ChatGPT 会话生成初次答案和追问答案。插件后端只保存题板与追问，不调用独立模型 API，不需要 API 密钥。生成答案使用 ChatGPT 的正常用量，仍受你的套餐、账户和模式限制。** 部署与实际宿主测试状态见 [验证记录](VERIFICATION.md)，源码和离线演示不代表已经接入成功。
 
-个人私有插件已部署：[题内问答](https://chatgpt.com/plugins/plugin_asdk_app_sites_9d45976b1cb48191b1cad4d004c26d2c)。插件系统报告已安装到创建者账户。生产表 qa_boards 已创建；当前正在进行的宿主对话没有暴露新插件工具，真实 Chat / Work 点击追问与模型写回仍待实测。打开插件入口后在需要时选择它，输入“把这些题做成互动答题板”。
+个人私有插件已部署：[题内问答](https://chatgpt.com/plugins/plugin_asdk_app_sites_9d45976b1cb48191b1cad4d004c26d2c)。插件系统报告已安装到创建者账户。生产表 qa_boards 已创建；真实插件连接、创建3题并再次读取已验证成功，requiresApiKey=false。题卡点击、ChatGPT追问写回与界面原位更新仍待完成实测。打开插件入口后在需要时选择它，输入“把这些题做成互动答题板”。
 
 源码仓库：[frostingg/Interactive-Learning](https://github.com/frostingg/Interactive-Learning)。
 
