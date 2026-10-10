@@ -3,7 +3,7 @@ import {readFile,mkdir,writeFile,rename} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {MemoryStore} from './store.mjs';
-import {createService,createMcpHandler,answerWithOpenAI} from './core.mjs';
+import {createService,createMcpHandler} from './core.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const dataPath=path.join(root,'.local-data','boards.json');
 class FileStore extends MemoryStore {
@@ -24,7 +24,7 @@ class FileStore extends MemoryStore {
 const store=new FileStore();
 try{store.records=new Map(JSON.parse(await readFile(dataPath,'utf8')));}catch(error){if(error.code!=='ENOENT')throw error;}
 const widget=await readFile(path.join(root,'public','widget.html'),'utf8');
-const service=createService(store,(card,question)=>answerWithOpenAI(card,question,process.env));
+const service=createService(store,{status:()=>({storageReady:true})});
 const mcp=createMcpHandler(service,widget);
 const port=Number(process.env.PORT||8787);
 http.createServer(async(req,res)=>{

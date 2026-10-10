@@ -1,1 +1,21 @@
-{"name":"inline-qa","version":"0.1.0","private":true,"type":"module","description":"Question cards with follow-ups inside the original card","scripts":{"start":"node src/local.mjs","test":"node --test","build":"node scripts/build.mjs"},"engines":{"node":">=22"}}
+{
+  "name": "inline-qa",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Question cards with follow-ups inside the original card",
+  "scripts": {
+    "start": "node src/local.mjs",
+    "test": "node --test",
+    "build": "node scripts/build.mjs",
+    "db:generate": "drizzle-kit generate"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

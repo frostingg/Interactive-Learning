@@ -1,33 +1,62 @@
 # 题内问答 · Interactive Learning
 
-把十多道题放进一张互动答题板：每道题下面都有追问框，新的解答追加在这一题的区域，其他题目保持位置。
+把十多道题放进一张互动答题板：每道题下面都有追问框，完整解答写回这一题的区域。
 
-**当前版本是源码 MVP。已实现服务端、题卡界面和可离线运行的交互演示；尚未部署或在 ChatGPT 中安装验证。演示使用明确标注的预设答复。真实局部 AI 需要配置服务端模型。**
+**v0.3.0 使用当前 ChatGPT 会话生成初次答案和追问答案。插件后端只保存题板与追问，不调用独立模型 API，不需要 API 密钥。生成答案使用 ChatGPT 的正常用量，仍受你的套餐、账户和模式限制。** 部署与实际宿主测试状态见 [验证记录](VERIFICATION.md)，源码和离线演示不代表已经接入成功。
 
-## 能做到什么
+个人私有插件已部署：[题内问答](https://chatgpt.com/plugins/plugin_asdk_app_sites_9d45976b1cb48191b1cad4d004c26d2c)。插件系统报告已安装到创建者账户。生产表 qa_boards 已创建；当前正在进行的宿主对话没有暴露新插件工具，真实 Chat / Work 点击追问与模型写回仍待实测。打开插件入口后在需要时选择它，输入“把这些题做成互动答题板”。
 
-- ChatGPT 首次回答一组题目时，通过 `create_board` 展示一个嵌入式题目列表。
-- 卡片直接调用 `ask_card`，后端生成解答，界面仅在当前题下追加。
-- 每个问题拥有独立 ID 与历史；追问时只发送本题内容。
-- 用户身份隔离，乐观并发保存，重复请求复用，失败后保留输入。
-- 输入、折叠等临时状态使用 widget state；真实内容保存到服务端。
-- 卡片内选中文字后，可把它加入本题追问。
+源码仓库：[frostingg/Interactive-Learning](https://github.com/frostingg/Interactive-Learning)。
 
-## 能力边界
+## 按需使用
 
-Skill 是工作流指令，不能接管 ChatGPT 的所有原生回复。此项目通过 MCP App 展示互动答题板，**不会修改宿主旧消息**，也没有“安装后所有对话强制变成卡片”的接口。
+1. 在支持插件与 MCP App 界面的 ChatGPT 客户端安装并连接“题内问答”。在需要时选择或 @ 提及它，也可以明确说：“把下面的问题做成互动答题板。”
+2. ChatGPT 先完成各题答案，再显示一张题板。一次支持 1–30 道题；超过上限分组展示。
+3. 在不明白的题目里点击“在这里追问”，输入疑问。也可以选中本题的一段文字，把它加入追问。
+4. 当前 ChatGPT 会话处理追问后，完整解答保存并显示在原题下方。其他题目继续留在原位。
 
-默认题内追问不调用 `ui/message` 或 `sendFollowUpMessage`，因此不主动生成一条主聊天消息。宿主仍可能显示工具活动、权限提示等系统行为，需要在实际 ChatGPT 账户和客户端验证。插件使用入口与支持的模式取决于账户和客户端；官方 quickstart 当前通过 ChatGPT Work 连接测试。
+普通问答、普通多题问题不会自动启用此工作流。你明确说“此会话以后使用互动模式”时，才持续用于当前会话；说“退出互动模式”即可停止。插件不会替换所有原生聊天回复。
 
-GitHub 托管源代码不等于 ChatGPT 插件已经上线。当前 `plugin.json` 是工作流的源清单；尚无已验证的远程 MCP 地址，仓库不包含假的 `mcp.json`。仅安装此 skill 不会启用交互。
+此路线面向 Chat 和 Work 中能够加载该插件工具、显示组件并接收组件消息的会话。实际可用入口、权限提示和界面行为取决于账户及客户端，网页与桌面、Chat 与 Work 需要分别验证。
 
-## 看演示
+## 追问怎样回到原题
 
-直接打开 `public/demo.html`。它自包含、无需依赖或密钥，展示 12 道题，可在各题内追加“预设示例解答”。演示不访问模型，也不保存真实学习内容。
+首次答案由当前 ChatGPT 模型准备，通过 `create_board` 保存并展示。题内追问使用以下流程：
+
+```text
+原题卡片提交追问
+  → ask_card 保存待处理请求
+  → 组件向当前 ChatGPT 会话发送处理提示
+  → get_card_request 读取本题及其追问历史
+  → 当前 ChatGPT 模型生成解答
+  → submit_card_answer 保存到原题
+  → 原组件轮询 get_card_request，显示新增解答
+```
+
+组件使用 MCP Apps `ui/message`，或宿主提供的 `sendFollowUpMessage`（请求 `scrollToBottom: false`），让当前会话处理待答请求。**主聊天可能出现一次处理轮次、简短确认或工具记录，不能保证完全隐藏。** 完整解释写入原题卡片，工作流要求主聊天只作简短确认，不创建新的题板组件。宿主不支持组件消息时，题内追问不能完成真实解答。
+
+每道题有独立 ID 与追问历史。`get_card_request` 只返回指定题目的内容；原答案也需由当前模型核对。后端按用户身份隔离记录，使用并发保存与请求 ID 去重。失败时界面保留输入，可重试同一次追问；已完成的请求不重复生成。临时输入与折叠状态保存在 widget state，正式题板保存在服务端。
+
+## 个人私有部署与连接
+
+使用 Sites 的个人私有托管边界部署同一个服务与 MCP App：
+
+- Worker 提供 `/mcp`，部署清单声明 `mcp` 能力与逻辑 D1 绑定 `DB`。
+- `db/schema.ts` 是表结构源文件，`drizzle/` 保存生成的 SQL、snapshot 与 journal；构建将迁移和托管清单放入部署产物。
+- 后端仅信任 Sites 认证边界注入的 `oai-authenticated-user-id`，每次读取和写入都检查记录归属。服务访问凭证不能替代用户身份。
+- Sites 发布后提供对应的私有插件。使用同一个插件安装或连接，按需选择；不要另外创建重复插件。连接成功后先调用只读 `service_status`，再验证真实题板流程。
+
+本路线没有独立模型 API 配置步骤，也不会读取或复用 ChatGPT 的登录凭证来请求外部推理服务。Sites 插件是否支持附带并保留 skill 文件，需要通过实际编辑与发布能力核对；MCP 工具说明也包含该工作流。GitHub 保存源代码，安装连接由 ChatGPT 与 Sites 完成。
+
+自托管时需要另行实现受支持的鉴权边界。不能直接把开发服务器发布到互联网，也不能把任意客户端传来的身份头当作登录身份。
+
+## 离线演示
+
+打开 `public/demo.html` 可查看 12 道题的自包含演示。**所有演示答复均为预设内容，不由 AI 根据追问生成**；演示不访问模型，也不保存真实学习记录。
 
 ## 本地开发
 
-Node.js 22 及以上；没有第三方运行依赖。
+Node.js 22 及以上。运行服务与核心测试无需模型密钥；数据库迁移生成需要项目中的开发依赖。
 
 ```sh
 node --test
@@ -35,52 +64,30 @@ node scripts/build.mjs
 node src/local.mjs
 ```
 
-浏览器打开 `http://127.0.0.1:8787/`。本地 MCP 地址为 `http://127.0.0.1:8787/mcp`。服务仅绑定回环地址，持久数据写入忽略提交的 `.local-data/boards.json`，开发模式使用独立的 `local-user` 身份。**不要把此开发服务直接发布到互联网或把客户端提供的身份头当作可信登录。**
+浏览器打开 `http://127.0.0.1:8787/`，本地 MCP 地址为 `http://127.0.0.1:8787/mcp`。服务只绑定回环地址，开发身份为 `local-user`，记录写入忽略提交的 `.local-data/boards.json`。首页是预设演示；真实 widget 需要兼容宿主通过 `create_board` 加载，完成追问还需要宿主读取请求并写回答案。
 
-真实生成需在启动进程的服务器环境中配置 `OPENAI_API_KEY` 和 `OPENAI_MODEL`。模型应选用你项目可访问且支持 Responses API 的模型。当前代码不会自动读取 `.env`；可以用 Node `--env-file=.env` 或系统环境变量。密钥只在后端使用，不填到题卡、GitHub 或普通聊天消息里。独立 API 请求按所配置项目的计费方式执行。
+修改表结构后使用已安装的开发依赖运行 `npm run db:generate`，检查生成迁移后按 Sites 流程发布。不要在请求处理中创建表或改动已应用的迁移。
 
-本地首页仍是明确标注的预设演示。真实 widget 由 MCP 客户端调用 `create_board` 后加载，不会偷偷将演示切换成真实生成。
-
-## ChatGPT 服务与连接
-
-优先使用 Sites 的私有托管边界：
-
-1. `src/worker.mjs` 导出 Worker `fetch(request, env)`；运行 build 后入口为 `dist/server/index.js`。它只信任 Sites 认证边界提供的 `oai-authenticated-user-id`。
-2. 通过 Sites 受支持的构建/存储流程声明 MCP 与逻辑 D1 绑定 `DB`。按其迁移流程生成/应用 `db/0001.sql` 对应的表，不在运行时创建表。当前仓库未注册 Site，未包含生产 Site ID。
-3. 在托管服务端配置模型和密钥。使用独立模型 API 的局部回答已实现；ChatGPT plan 的专用 OAuth 推理路径是未来可选项，**当前未实现**，不能拿现有 ChatGPT/Codex 登录凭证直接复用。
-4. 在受支持的 ChatGPT 插件界面连接已部署的 HTTPS `/mcp`，使用 Sites 创建的同一个私有插件，不额外创建重复插件。将 skill 通过支持保留技能的插件编辑方式加入；该能力需对实际插件验证。
-5. 真实测试：创建题板 → 第二题追问 → 检查第二题内部出现解答 → 第一题不变 → 刷新恢复 → 主聊天未收到追问消息。网页和桌面应用分别验证。
-
-也可以自托管，但必须先实现受支持的 OAuth/鉴权边界，服务器不能信任任意浏览器发送的 `oai-authenticated-user-id`。默认 Worker 不应暴露于允许伪造身份头的公开源。
-
-## 目录
+## 主要文件
 
 ```text
-plugin.json
-skills/inline-qa/SKILL.md
-public/widget.html      真正的 MCP App 题卡
-public/demo.html        自包含预设演示
-src/core.mjs            MCP、题目工作流、模型适配
-src/store.mjs           内存测试存储和 D1 存储
-src/local.mjs           回环开发服务与文件持久化
-src/worker.mjs          认证边界后的托管入口
-db/0001.sql             生产表结构
-scripts/build.mjs      零依赖 Worker 打包
-test/core.test.mjs
+plugin.json                 插件源码清单
+skills/inline-qa/SKILL.md    按需启用与原题写回工作流
+public/widget.html          MCP App 题卡组件
+public/demo.html            预设答复演示
+src/core.mjs                MCP 与待答请求、写回流程
+src/store.mjs               测试存储和 D1 存储
+src/local.mjs               回环开发服务与文件持久化
+src/worker.mjs              Sites 认证边界后的入口
+db/schema.ts                D1 表结构
+drizzle/                    生成的 SQL 与迁移元数据
+scripts/build.mjs           Worker 与部署产物构建
+test/core.test.mjs          核心行为检查
 ```
-
-## 已验证和待验证
-
-- 自动测试：逐题与逐用户隔离、并发不同题保存、重复请求、失败后重试、模型请求上下文、MCP 协议与资源。
-- 静态演示：另见 `VERIFICATION.md` 的实际运行结果。
-- 未验证：真实 OpenAI 请求、生产 D1、Sites 发布、ChatGPT 安装和网页/桌面宿主行为。
 
 ## 官方参考
 
 - [Skill 的职责](https://developers.openai.com/plugins/concepts/skills)
 - [互动 UI 与工具调用](https://developers.openai.com/plugins/build/chatgpt-ui)
-- [Widget bridge](https://developers.openai.com/plugins/reference)
-- [插件连接 quickstart](https://developers.openai.com/plugins/quickstart)
-- [可选 ChatGPT plan 推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
-
-此仓库不含 API 密钥、生产学习记录或账号登录凭证。
+- [组件桥接与状态](https://developers.openai.com/plugins/reference)
+- [插件连接与测试](https://developers.openai.com/plugins/quickstart)
