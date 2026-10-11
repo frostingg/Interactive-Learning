@@ -34,3 +34,8 @@
 主聊天可能显示处理轮次、简短确认或工具活动；插件不能保证隐藏这些记录或原生输入框。Sites 自动生成插件暂不可用 Plugin Creator 编辑源文件（404），skill 保留在 GitHub；未声称已经附加云端 skill。服务访问凭证的直接 MCP 探测曾返回 403，它不能替代真实账户插件连接。
 
 个人私有插件：[题内问答](https://chatgpt.com/plugins/plugin_asdk_app_sites_9d45976b1cb48191b1cad4d004c26d2c)。
+
+发布构建补充：本机官方打包 helper 缺少 bash 命令，源码保存/推送已完成后打包无法启动；按原生 Sites 工具支持的流程改用远端构建。首次远端构建 appgdep_6acaffdf598c8191b99d567d03e4e4f2 因 pnpm 未授权构建脚本失败。仅批准锁文件中 esbuild 的三个版本（0.18.20、0.25.12、0.28.2），其他依赖脚本仍采用默认规则。
+
+
+v0.3.2 发布确认（2026-10-11）：远端构建与私有发布成功，部署 appgdep_6acb013d007481918d39fbe50eb7600f，源提交 a236f54261806831c31cf767e4a82ea639cb951c。真实插件 service_status 已读回 version=0.3.2、storageReady=true、answerProvider=chatgpt-host、requiresApiKey=false。插件身份与私有访问保持原样；真实 Chat 客户端首次加载及双输入框问题仍未确认解决。
