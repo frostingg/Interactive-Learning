@@ -1,6 +1,6 @@
 {
   "name": "inline-qa",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "type": "module",
   "description": "Question cards with follow-ups inside the original card",

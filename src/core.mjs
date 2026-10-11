@@ -1,5 +1,7 @@
-export const UI_URI = 'ui://inline-qa/widget.html';
-export const VERSION = '0.3.2';
+export const UI_URI = 'ui://inline-qa/widget-v0.3.3.html';
+export const LEGACY_UI_URI = 'ui://inline-qa/widget.html';
+export const VERSION = '0.3.3';
+const UI_MIME = 'text/html;profile=mcp-app';
 const objectSchema = (properties, required) => ({type:'object',properties,required,additionalProperties:false});
 const textSchema = maxLength => ({type:'string',minLength:1,maxLength});
 const idSchema = textSchema(80);
@@ -126,7 +128,12 @@ export function createService(store,{now=Date.now,uuid=()=>crypto.randomUUID(),s
     }
   };
 }
-export function createMcpHandler(service,widgetHtml) {
+function protocolVersionForLog(value) {
+  if(typeof value!=='string'||value.length!==10||!/^\d{4}-\d{2}-\d{2}$/.test(value))return null;
+  const time=Date.parse(value+'T00:00:00Z');
+  return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===value?value:null;
+}
+export function createMcpHandler(service,widgetHtml,{onResourceRead}={}) {
   const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
   return async(request,owner)=>{
     if(request.method!=='POST') return new Response(null,{status:405,headers:{Allow:'POST'}});
@@ -144,10 +151,22 @@ export function createMcpHandler(service,widgetHtml) {
     if(method==='initialize') return reply({protocolVersion:params.protocolVersion||'2025-03-26',capabilities:{tools:{},resources:{}},serverInfo:{name:'inline-qa',version:VERSION},instructions:'Use create_board only when the user selects this plugin or asks for an interactive board. Follow-ups use the current ChatGPT model: get_card_request then submit_card_answer. Save the full explanation to its original card; only briefly acknowledge in main chat. Do not open or create another component for follow-ups.'});
     if(method==='ping') return reply({});
     if(method==='tools/list') return reply({tools});
-    if(method==='resources/list') return reply({resources:[{uri:UI_URI,name:'互动答题板',mimeType:'text/html;profile=mcp-app'}]});
+    if(method==='resources/list') return reply({resources:[{uri:UI_URI,name:'互动答题板',mimeType:UI_MIME}]});
     if(method==='resources/templates/list') return reply({resourceTemplates:[]});
     if(method==='prompts/list') return reply({prompts:[]});
-    if(method==='resources/read'&&params.uri===UI_URI) return reply({contents:[{uri:UI_URI,mimeType:'text/html;profile=mcp-app',text:widgetHtml,_meta:{'openai/ui':{availableDisplayModes:['inline','fullscreen']},ui:{prefersBorder:true,csp:{connectDomains:[],resourceDomains:[]}},'openai/widgetDescription':'题目卡片；使用当前 ChatGPT 解答追问，完整答案写回本题。主聊天可能显示处理记录。','openai/widgetPrefersBorder':true,'openai/widgetCSP':{connect_domains:[],resource_domains:[]}}}]});
+    if(method==='resources/read'&&(params.uri===UI_URI||params.uri===LEGACY_UI_URI)) {
+      if(typeof onResourceRead==='function') {
+        const diagnostic=Object.freeze({
+          event:'inline-qa.resource-read',templateUri:UI_URI,requestedUri:params.uri,version:VERSION,
+          mimeType:UI_MIME,htmlBytes:new TextEncoder().encode(widgetHtml).length,
+          headerProtocolVersion:protocolVersionForLog(request.headers.get('mcp-protocol-version')),
+          bodyProtocolVersion:protocolVersionForLog(params?._meta?.['io.modelcontextprotocol/protocolVersion'])
+        });
+        // Diagnostics must never block or change a valid resource response.
+        try{Promise.resolve(onResourceRead(diagnostic)).catch(()=>{})}catch(_){}
+      }
+      return reply({contents:[{uri:params.uri,mimeType:UI_MIME,text:widgetHtml,_meta:{'openai/ui':{availableDisplayModes:['inline','fullscreen']},ui:{prefersBorder:true,csp:{connectDomains:[],resourceDomains:[]}},'openai/widgetDescription':'题目卡片；使用当前 ChatGPT 解答追问，完整答案写回本题。主聊天可能显示处理记录。','openai/widgetPrefersBorder':true,'openai/widgetCSP':{connect_domains:[],resource_domains:[]}}}]});
+    }
     if(method==='tools/call') {
       if(!owner) return json({error:'Authentication required'},401);
       try {

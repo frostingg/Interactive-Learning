@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {MemoryStore} from '../src/store.mjs';
-import {createService,createMcpHandler,UI_URI,VERSION} from '../src/core.mjs';
+import {createService,createMcpHandler,UI_URI,LEGACY_UI_URI,VERSION} from '../src/core.mjs';
 
 const TTL=30*60*1000;
 const cards=[
@@ -229,7 +229,7 @@ test('service status reports the native host and never requires an independent A
   assert.deepEqual((await service.call('service_status',{},'alice')).status,{
     version:VERSION,storageReady:true,answerProvider:'chatgpt-host',requiresApiKey:false
   });
-  assert.equal(VERSION,'0.3.2');
+  assert.equal(VERSION,'0.3.3');
   const unavailable=setup({status:()=>({storageReady:false})}).service;
   assert.equal((await unavailable.call('service_status',{},'alice')).status.storageReady,false);
 });
@@ -248,7 +248,7 @@ test('MCP discovery supports 2026-07-28 and exposes host follow-up tools without
   assert.equal(discovery.result.resultType,'complete');
   const initialized=await rpc('initialize',{protocolVersion:'2026-07-28'});
   assert.equal(initialized.result.protocolVersion,'2026-07-28');
-  assert.equal(initialized.result.serverInfo.version,'0.3.2');
+  assert.equal(initialized.result.serverInfo.version,'0.3.3');
   const listed=await rpc('tools/list');
   assert.equal(listed.result.resultType,'complete');
   const tools=listed.result.tools;
@@ -385,7 +385,7 @@ test('all seven tools return complete results conforming to their declared outpu
     return result.structuredContent;
   };
   const status=await call('service_status',{});
-  assert.equal(status.status.version,'0.3.2');
+  assert.equal(status.status.version,'0.3.3');
   const created=await call('create_board',{title:'真实返回结构',cards});
   const b=created.board,args=ids(b,1,'schema-followup');
   assert.equal(b.cards.length,2);
@@ -428,10 +428,119 @@ test('legacy MCP initialize and resource access stay compatible without a modern
   };
   const initialized=await rpc('initialize',{protocolVersion:'2025-03-26'});
   assert.equal(initialized.protocolVersion,'2025-03-26');
-  assert.equal(initialized.serverInfo.version,'0.3.2');
+  assert.equal(initialized.serverInfo.version,'0.3.3');
   const resource=await rpc('resources/read',{uri:UI_URI});
   assert.equal(resource.contents[0].text,'<html>legacy widget</html>');
   const status=await rpc('tools/call',{name:'service_status',arguments:{}});
-  assert.equal(status.structuredContent.status.version,'0.3.2');
+  assert.equal(status.structuredContent.status.version,'0.3.3');
   assert.equal(status.isError,undefined);
+});
+
+function resourceTestRequest(method,params={},headerVersion='2026-07-28',extraHeaders={}) {
+  const headers={'Content-Type':'application/json',...extraHeaders};
+  if(headerVersion!==null)headers['MCP-Protocol-Version']=headerVersion;
+  return new Request('https://test.invalid/mcp',{
+    method:'POST',headers,
+    body:JSON.stringify({jsonrpc:'2.0',id:77,method,params})
+  });
+}
+
+
+test('versioned renderer pointers and old-resource alias keep existing boards unchanged',async()=>{
+  assert.equal(UI_URI,'ui://inline-qa/widget-v0.3.3.html');
+  assert.equal(LEGACY_UI_URI,'ui://inline-qa/widget.html');
+  const {store,service}=setup();const b=await board(service);
+  const before=await store.read('alice',b.id);
+  const html='<!doctype html><html><body>共享静态题卡</body></html>';
+  const handler=createMcpHandler(service,html);
+  const rpc=async(method,params,version)=>(await handler(resourceTestRequest(method,params,version),'alice')).json();
+  const listed=await rpc('tools/list',{});
+  for(const name of ['create_board','open_board']) {
+    const descriptor=listed.result.tools.find(tool=>tool.name===name);
+    assert.equal(descriptor._meta.ui.resourceUri,UI_URI);
+    assert.equal(descriptor._meta['openai/outputTemplate'],UI_URI);
+  }
+  const resources=await rpc('resources/list',{});
+  assert.deepEqual(resources.result.resources.map(resource=>resource.uri),[UI_URI]);
+  for(const version of ['2026-07-28','2025-11-25']) {
+    for(const uri of [UI_URI,LEGACY_UI_URI]) {
+      const response=await rpc('resources/read',{uri},version);
+      assert.equal(response.error,undefined);
+      assert.equal(response.result.resultType,version==='2026-07-28'?'complete':undefined);
+      assert.equal(response.result.contents[0].uri,uri);
+      assert.equal(response.result.contents[0].mimeType,'text/html;profile=mcp-app');
+      assert.equal(response.result.contents[0].text,html);
+    }
+  }
+  assert.deepEqual((await service.call('get_board',{boardId:b.id},'alice')).board,b);
+  assert.deepEqual(await store.read('alice',b.id),before);
+});
+
+
+test('resource diagnostics whitelist fixed fields and sanitize protocol metadata',async()=>{
+  const {service}=setup();const events=[];
+  const html='<!doctype html><html><body>静态题卡 🧩</body></html>';
+  const handler=createMcpHandler(service,html,{onResourceRead:diagnostic=>events.push(diagnostic)});
+  const request=resourceTestRequest('resources/read',{
+    uri:UI_URI,question:'private-question-marker',answer:'private-answer-marker',
+    _meta:{
+      'io.modelcontextprotocol/protocolVersion':'2026-07-28',
+      privateOwner:'private-owner-marker',privatePayload:'private-payload-marker'
+    }
+  },'2026-07-28',{'Authorization':'Bearer private-auth-marker'});
+  const response=await (await handler(request,'private-owner-marker')).json();
+  assert.equal(response.result.contents[0].uri,UI_URI);
+  assert.deepEqual(events[0],{
+    event:'inline-qa.resource-read',templateUri:UI_URI,requestedUri:UI_URI,version:'0.3.3',
+    mimeType:'text/html;profile=mcp-app',htmlBytes:new TextEncoder().encode(html).length,
+    headerProtocolVersion:'2026-07-28',bodyProtocolVersion:'2026-07-28'
+  });
+  await handler(resourceTestRequest('resources/read',{
+    uri:LEGACY_UI_URI,_meta:{'io.modelcontextprotocol/protocolVersion':'2026-02-30'}
+  },'private-header-marker'),'private-owner-marker');
+  assert.equal(events[1].requestedUri,LEGACY_UI_URI);
+  assert.equal(events[1].templateUri,UI_URI);
+  assert.equal(events[1].headerProtocolVersion,null);
+  assert.equal(events[1].bodyProtocolVersion,null);
+  await handler(resourceTestRequest('resources/read',{
+    uri:LEGACY_UI_URI,_meta:{'io.modelcontextprotocol/protocolVersion':'private-body-marker'}
+  },'2025-11-25'),'private-owner-marker');
+  assert.equal(events[2].headerProtocolVersion,'2025-11-25');
+  assert.equal(events[2].bodyProtocolVersion,null);
+  await handler(resourceTestRequest('resources/read',{
+    uri:UI_URI,_meta:{'io.modelcontextprotocol/protocolVersion':{secret:'private-object-marker'}}
+  },null),'private-owner-marker');
+  assert.equal(events[3].headerProtocolVersion,null);
+  assert.equal(events[3].bodyProtocolVersion,null);
+  const keys=['event','templateUri','requestedUri','version','mimeType','htmlBytes','headerProtocolVersion','bodyProtocolVersion'].sort();
+  for(const event of events)assert.deepEqual(Object.keys(event).sort(),keys);
+  const serialized=JSON.stringify(events);
+  for(const privateValue of ['private-question-marker','private-answer-marker','private-owner-marker','private-payload-marker','private-auth-marker','private-header-marker','private-body-marker','private-object-marker',html]) {
+    assert.equal(serialized.includes(privateValue),false);
+  }
+  await handler(resourceTestRequest('tools/list',{}),'alice');
+  await handler(resourceTestRequest('tools/call',{name:'service_status',arguments:{}}),'alice');
+  await handler(resourceTestRequest('resources/read',{uri:'ui://unrecognized/private-resource-marker'}),'alice');
+  assert.equal(events.length,4,'only recognized resource reads produce diagnostics');
+});
+
+
+test('throwing, rejecting or pending resource diagnostic callbacks cannot break resource delivery',async()=>{
+  const {service}=setup();const html='<html>still available</html>';
+  const callbacks=[
+    ()=>{throw Error('private-logger-error')},
+    async()=>{throw Error('private-async-logger-error')},
+    ()=>new Promise(()=>{})
+  ];
+  for(const onResourceRead of callbacks) {
+    const handler=createMcpHandler(service,html,{onResourceRead});
+    const response=await handler(resourceTestRequest('resources/read',{uri:UI_URI}),'alice');
+    assert.equal(response.status,200);
+    const envelope=await response.json();
+    assert.equal(envelope.error,undefined);
+    assert.equal(envelope.result.resultType,'complete');
+    assert.equal(envelope.result.contents[0].text,html);
+    assert.equal(JSON.stringify(envelope).includes('private-'),false);
+  }
+  await Promise.resolve();
 });

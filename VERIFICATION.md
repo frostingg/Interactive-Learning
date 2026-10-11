@@ -1,3 +1,22 @@
+# v0.3.3 验证记录
+
+更新时间：2026-10-11（Asia/Shanghai）。
+
+用户真实 Chat 截图显示“无法打开 互动答题板”，右侧“CSP 已关闭”，主回复称创建29张概率论公式卡片。真实 get_board 已读回题板 bd442d48-57c9-4b88-b4a2-58999d27e983，29题、0次追问，标题为“概率论公式总表｜离散与连续分布（PMF/PDF、CDF、均值、方差）”。因此修正此前判断：Chat能够调用这个插件，安装管理的not_installed返回不能据此断言插件未连接；尚未完成真实界面渲染。
+
+生产日志：2026-10-11 23:10（Asia/Shanghai）create_board返回HTTP200；随后多次resources/read读取旧地址，HTTP200，协议头2026-07-28，无Worker异常；没有ask_card调用。HTTP成功不证明宿主解析/显示成功。“CSP已关闭”徽标未找到官方释义，不能当作CSP拦截证据。
+
+本版本修复：新资源URI隔离旧模板缓存，全部渲染工具和资源列表同步；保留旧URI读取兼容并返回对应请求URI。添加不含身份、题目、答案或凭证的资源读取诊断。官方明确资源URI是缓存键；新地址可以隔离旧缓存，但缓存尚未确认是本次根因。
+
+当前未宣称真实Chat或Work题板已可用。新版需验证重新打开已保存题板；不要重新创建或覆盖29题。没有新增独立模型API或API密钥。
+
+本版本检查：21 / 21 核心自动测试通过，构建成功。新增检查覆盖所有渲染工具和资源列表的新URI一致性、现代/旧协议对新URI及旧alias的四种读取组合、旧题板数据保持不变、诊断字段白名单与日志回调抛错/拒绝/挂起时资源仍立即返回。真实Chat界面重新打开仍待验证。
+v0.3.3 私有部署成功：appgdep_6acbada2891c8191b15f2b42e43e0660，源码提交244bcf3c5bed97ed5537b3d828377ceeec877675；Site第5版，has_mcp=true，仍是原插件、地址和私有访问范围。官方本地helper完成源码保存/推送后因本机缺少bash而无法打包，按Sites工具支持的远端构建流程发布。真实service_status随后确认0.3.3、storageReady=true、answerProvider=chatgpt-host、requiresApiKey=false。部署后get_board与部署前29题结构全量一致。
+
+生产资源日志已记录新版URI（发布校验）与旧alias（本Work会话open_board后）的读取，模板版本0.3.3，HTML 43530 UTF8字节，MIME text/html;profile=mcp-app，协议头和请求体均为2026-07-28。这些请求不存在头/体版本不一致。旧会话仍可能沿用先前工具描述；HTTP成功、资源日志和只读open_board成功仍不能证明原Chat界面已显示，也不能替代题内点击与真实模型写回验证。
+
+---
+
 # 验证记录
 
 对应 v0.3.2，更新时间：2026-10-11（Asia/Shanghai）。
@@ -36,6 +55,3 @@
 个人私有插件：[题内问答](https://chatgpt.com/plugins/plugin_asdk_app_sites_9d45976b1cb48191b1cad4d004c26d2c)。
 
 发布构建补充：本机官方打包 helper 缺少 bash 命令，源码保存/推送已完成后打包无法启动；按原生 Sites 工具支持的流程改用远端构建。首次远端构建 appgdep_6acaffdf598c8191b99d567d03e4e4f2 因 pnpm 未授权构建脚本失败。仅批准锁文件中 esbuild 的三个版本（0.18.20、0.25.12、0.28.2），其他依赖脚本仍采用默认规则。
-
-
-v0.3.2 发布确认（2026-10-11）：远端构建与私有发布成功，部署 appgdep_6acb013d007481918d39fbe50eb7600f，源提交 a236f54261806831c31cf767e4a82ea639cb951c。真实插件 service_status 已读回 version=0.3.2、storageReady=true、answerProvider=chatgpt-host、requiresApiKey=false。插件身份与私有访问保持原样；真实 Chat 客户端首次加载及双输入框问题仍未确认解决。

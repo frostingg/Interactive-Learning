@@ -268,7 +268,7 @@ try{window.parent.postMessage({jsonrpc:'2.0',id,method,params},hostOrigin)}catch
 function initializeBridge(){
 if(tornDown)return Promise.reject(closedError());
 if(standardReady)return Promise.resolve();if(bridgePromise)return bridgePromise;
-bridgePromise=rpcRequest('ui/initialize',{appInfo:{name:'inline-qa-widget',version:'0.3.2'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'}).then(result=>{
+bridgePromise=rpcRequest('ui/initialize',{appInfo:{name:'inline-qa-widget',version:'0.3.3'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'}).then(result=>{
 assertViewActive();
 if(!obj(result)||result.protocolVersion!=='2026-01-26')throw new Error('当前客户端未完成兼容的题卡连接，请重试。');
 hostCapabilities=obj(result.hostCapabilities)?result.hostCapabilities:{};
