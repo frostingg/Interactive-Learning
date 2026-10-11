@@ -229,7 +229,7 @@ test('service status reports the native host and never requires an independent A
   assert.deepEqual((await service.call('service_status',{},'alice')).status,{
     version:VERSION,storageReady:true,answerProvider:'chatgpt-host',requiresApiKey:false
   });
-  assert.equal(VERSION,'0.3.1');
+  assert.equal(VERSION,'0.3.2');
   const unavailable=setup({status:()=>({storageReady:false})}).service;
   assert.equal((await unavailable.call('service_status',{},'alice')).status.storageReady,false);
 });
@@ -248,7 +248,7 @@ test('MCP discovery supports 2026-07-28 and exposes host follow-up tools without
   assert.equal(discovery.result.resultType,'complete');
   const initialized=await rpc('initialize',{protocolVersion:'2026-07-28'});
   assert.equal(initialized.result.protocolVersion,'2026-07-28');
-  assert.equal(initialized.result.serverInfo.version,'0.3.1');
+  assert.equal(initialized.result.serverInfo.version,'0.3.2');
   const listed=await rpc('tools/list');
   assert.equal(listed.result.resultType,'complete');
   const tools=listed.result.tools;
@@ -385,7 +385,7 @@ test('all seven tools return complete results conforming to their declared outpu
     return result.structuredContent;
   };
   const status=await call('service_status',{});
-  assert.equal(status.status.version,'0.3.1');
+  assert.equal(status.status.version,'0.3.2');
   const created=await call('create_board',{title:'真实返回结构',cards});
   const b=created.board,args=ids(b,1,'schema-followup');
   assert.equal(b.cards.length,2);
@@ -428,10 +428,10 @@ test('legacy MCP initialize and resource access stay compatible without a modern
   };
   const initialized=await rpc('initialize',{protocolVersion:'2025-03-26'});
   assert.equal(initialized.protocolVersion,'2025-03-26');
-  assert.equal(initialized.serverInfo.version,'0.3.1');
+  assert.equal(initialized.serverInfo.version,'0.3.2');
   const resource=await rpc('resources/read',{uri:UI_URI});
   assert.equal(resource.contents[0].text,'<html>legacy widget</html>');
   const status=await rpc('tools/call',{name:'service_status',arguments:{}});
-  assert.equal(status.structuredContent.status.version,'0.3.1');
+  assert.equal(status.structuredContent.status.version,'0.3.2');
   assert.equal(status.isError,undefined);
 });

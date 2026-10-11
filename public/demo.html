@@ -24,7 +24,8 @@
 'use strict';
 const demoMode=document.body.dataset.mode==='demo',$=id=>document.getElementById(id);
 const views=new Map(),busy=new Map(),selectedQuotes=new Map(),rpcPending=new Map();
-let board=null,rpcId=0,hostOrigin='*',standardReady=false,bridgePromise=null,toastTimer=0,refreshedBoardId=null,lastHeight=0;
+let board=null,rpcId=0,hostOrigin='*',standardReady=false,bridgePromise=null,toastTimer=0,refreshedBoardId=null,lastHeight=0,tornDown=false,hostCapabilities={},resizeObserver=null,resizeFrame=0;
+const viewLifetime=new AbortController();
 let ui={boardId:null,drafts:{},collapsed:{},composerOpen:{},quotes:{},failed:{},activeRequests:{},filter:''};
 const demoLessons=[
 ['为什么负数乘负数会得到正数？','乘法要与分配律保持一致。因为 0 = (−1) × (1 + (−1))，展开得到 0 = −1 + (−1) × (−1)，所以 (−1) × (−1) = 1。\n关键是：这种规则让已有的加法和乘法规律继续成立。','把它看成补回一次损失：每次少 3 元，记作 −3；撤销两次「少 3 元」，相当于增加 6 元。这个例子帮助直觉理解，分配律则给出严格推导。'],
@@ -44,9 +45,27 @@ function makeDemoBoard(){return{id:'demo-board',title:'12 道题，一起慢慢�
 function el(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node}
 function put(node,text){const value=String(text??'');if(node.textContent!==value)node.textContent=value}
 function obj(v){return v&&typeof v==='object'&&!Array.isArray(v)}
+function closedError(){return new Error('题卡已关闭。重新打开后可以检查原追问。')}
+function assertViewActive(){if(tornDown)throw closedError()}
+function teardownView(){
+if(tornDown)return;
+// Keep delivery and request IDs so reopening checks the same work instead of resending it.
+try{persist()}catch(_){}
+tornDown=true;standardReady=false;viewLifetime.abort();
+clearTimeout(toastTimer);resizeObserver?.disconnect();if(resizeFrame)cancelAnimationFrame(resizeFrame);
+for(const pending of rpcPending.values()){clearTimeout(pending.timer);pending.reject(closedError())}
+rpcPending.clear();busy.clear();
+}
+function showBridgeError(error){
+// A failed standard handshake must not label an already usable legacy bridge as broken.
+if(tornDown||board&&typeof window.openai?.callTool==='function')return;
+const message=/timeout|超时/i.test(error?.message??'')?'题卡连接超时，请重试。':'题卡连接失败：'+readableError(error);
+put($('board-error'),message);$('board-error').hidden=false;
+if(!board)put($('empty-copy'),'题卡未能完成连接，请重试。已保存的题目和解答仍可恢复。');
+}
 function restoreState(state){const data=state?.privateContent?.inlineQA??state?.inlineQA;if(!obj(data)||board&&data.boardId!==board.id)return;const next={...ui};for(const key of ['drafts','collapsed','composerOpen','quotes','failed','activeRequests'])if(obj(data[key]))next[key]={...data[key]};next.boardId=typeof data.boardId==='string'?data.boardId:null;next.filter=typeof data.filter==='string'?data.filter:'';for(const[id,request]of Object.entries(next.activeRequests??{})){if(!next.failed[id])next.failed[id]={...request,error:'上次追问仍待确认。请检查这次解答；不会重复发起已发送的追问。'}}next.activeRequests={};ui=next}
-function persist(){if(demoMode){try{sessionStorage.setItem('inline-qa-demo-ui',JSON.stringify(ui))}catch(_){}}else if(typeof window.openai?.setWidgetState==='function'){window.openai.setWidgetState({privateContent:{inlineQA:ui}})}}
-function say(message){put($('toast'),message);$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('toast').hidden=true},3500)}
+function persist(){if(tornDown)return;if(demoMode){try{sessionStorage.setItem('inline-qa-demo-ui',JSON.stringify(ui))}catch(_){}}else if(typeof window.openai?.setWidgetState==='function'){window.openai.setWidgetState({privateContent:{inlineQA:ui}})}}
+function say(message){if(tornDown)return;put($('toast'),message);$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('toast').hidden=true},3500)}
 function requestId(){return window.crypto?.randomUUID?.()??'qa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)}
 function readableError(error){const message=typeof error==='string'?error:error?.message??error?.data?.message??'';if(/timeout|超时/i.test(message))return'这次追问等待超时。可检查同一次追问的解答进度。';return message?String(message).slice(0,350):'这次追问没有完成。请稍后检查或重试。'}
 function unpack(result){if(result?.isError){const text=result.content?.filter(x=>x.type==='text').map(x=>x.text).join('\n');throw new Error(text||'这次追问没有完成。')}if(obj(result?.structuredContent))return result.structuredContent;for(const item of result?.content??[]){if(item.type!=='text')continue;try{const value=JSON.parse(item.text);if(obj(value)&&(obj(value.board)||typeof value.boardId==='string'||obj(value.status)))return value}catch(_){}}return result}
@@ -56,6 +75,7 @@ const ids=new Set();const cards=value.cards.filter(c=>obj(c)&&typeof c.id==='str
 return{id:value.id,title:String(value.title??'读到哪里，就问到哪里。'),cards}
 }
 function applyResult(result){
+if(tornDown)return false;
 const data=unpack(result);
 if(data?.board){const incoming=normalizeBoard(data.board);if(!incoming||board&&incoming.id!==board.id)return false;
 if(ui.boardId!==incoming.id)ui={boardId:incoming.id,drafts:{},collapsed:{},composerOpen:{},quotes:{},failed:{},activeRequests:{},filter:''};
@@ -64,9 +84,12 @@ board=incoming;renderBoard();refreshFromServer();return true}
 if(data?.boardId===board?.id&&typeof data.cardId==='string'&&obj(data.followup)){const card=board.cards.find(x=>x.id===data.cardId),f=data.followup;if(!card||typeof f.requestId!=='string')return false;const existing=card.followups.find(x=>x.requestId===f.requestId),next={requestId:f.requestId,question:String(f.question??''),answer:String(f.answer??'')};if(existing)Object.assign(existing,next);else card.followups.push(next);renderCard(card);renderSummary();return true}
 return false
 }
-async function refreshFromServer(){if(demoMode||!board||refreshedBoardId===board.id)return;const id=board.id;refreshedBoardId=id;try{const result=await callTool('get_board',{boardId:id});if(board?.id===id){applyResult(result);$('board-error').hidden=true;}}catch(error){if(board?.id===id){put($('board-error'),'无法恢复最新追问：'+readableError(error));$('board-error').hidden=false;refreshedBoardId=null;}}}
-function notifySize(){if(demoMode)return;const height=Math.ceil(document.querySelector('.shell').getBoundingClientRect().height);if(Math.abs(height-lastHeight)<2)return;lastHeight=height;if(standardReady)window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:{height}},hostOrigin);else if(typeof window.openai?.notifyIntrinsicHeight==='function')window.openai.notifyIntrinsicHeight(height);}
-if(typeof ResizeObserver==='function')new ResizeObserver(()=>requestAnimationFrame(notifySize)).observe(document.querySelector('.shell'));
+async function refreshFromServer(){if(tornDown||demoMode||!board||refreshedBoardId===board.id)return;const id=board.id;refreshedBoardId=id;try{const result=await callTool('get_board',{boardId:id});if(!tornDown&&board?.id===id){applyResult(result);$('board-error').hidden=true;}}catch(error){if(!tornDown&&board?.id===id){put($('board-error'),'无法恢复最新追问：'+readableError(error));$('board-error').hidden=false;refreshedBoardId=null;}}}
+function notifySize(){if(tornDown||demoMode)return;const height=Math.ceil(document.querySelector('.shell').getBoundingClientRect().height);if(Math.abs(height-lastHeight)<2)return;lastHeight=height;if(standardReady)window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:{height}},hostOrigin);else if(typeof window.openai?.notifyIntrinsicHeight==='function')window.openai.notifyIntrinsicHeight(height);}
+if(typeof ResizeObserver==='function'){
+resizeObserver=new ResizeObserver(()=>{if(tornDown)return;if(resizeFrame)cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>{resizeFrame=0;notifySize()})});
+resizeObserver.observe(document.querySelector('.shell'));
+}
 function currentCard(id){return board?.cards.find(c=>c.id===id)}
 function createCard(card){
 const root=el('article','card');root.id='question-'+card.index;root.dataset.cardId=card.id;root.tabIndex=-1;
@@ -93,7 +116,7 @@ return view
 }
 function updateSubmit(view,id){view.submit.disabled=busy.has(id)||!String(ui.drafts[id]??'').trim();put(view.submit,busy.has(id)?(demoMode?'展示中…':'解答中…'):(demoMode?'展示预设答复 ↗':'发送追问 ↗'))}
 function renderCard(card){
-if(!card)return;let v=views.get(card.id);if(!v){v=createCard(card);views.set(card.id,v)}
+if(tornDown||!card)return;let v=views.get(card.id);if(!v){v=createCard(card);views.set(card.id,v)}
 put(v.number,String(card.index).padStart(2,'0'));put(v.title,card.question);put(v.answer,card.answer);
 const collapsed=Boolean(ui.collapsed[card.id]);v.body.hidden=collapsed;v.toggle.setAttribute('aria-expanded',String(!collapsed));put(v.toggle,collapsed?'展开 ＋':'收起 −');
 put(v.composerLabel,'继续问第 '+String(card.index).padStart(2,'0')+' 题');v.composer.hidden=!ui.composerOpen[card.id];
@@ -104,8 +127,9 @@ for(const[id,fv]of v.followupViews)if(!ids.has(id)){fv.root.remove();v.followupV
 const pending=busy.get(card.id),failure=ui.failed[card.id];v.status.hidden=!pending&&!failure;v.status.dataset.kind=pending?'pending':'error';put(v.status,pending?(demoMode?'正在展示本题的预设答复…':pending.phase==='waiting'?(pending.delivery==='unknown'?'已尝试在当前对话发起追问，正在检查题内解答。':'已在当前对话发起追问，等待 ChatGPT 将解答放回此题。'):pending.phase==='paused'?'卡片在后台，已暂停检查；重新打开后继续。':'正在检查并准备这道题的追问…'):(failure?.error??''));v.retry.hidden=!failure||Boolean(pending);put(v.retry,failure?.delivery&&failure.delivery!=='not-sent'?'检查这次解答':'重试这次追问');updateSubmit(v,card.id);if(v.nav)v.nav.classList.toggle('has-followups',card.followups.length>0);
 const term=ui.filter.trim().toLocaleLowerCase();v.root.hidden=Boolean(term)&&![card.question,card.answer,...card.followups.flatMap(f=>[f.question,f.answer])].some(t=>t.toLocaleLowerCase().includes(term))
 }
-function renderSummary(){if(!board)return;const count=board.cards.reduce((n,c)=>n+c.followups.length,0);$('summary').replaceChildren(el('strong','',String(board.cards.length)),document.createTextNode(' 道题 · '+count+' 次追问'));for(const card of board.cards){const v=views.get(card.id);v?.nav?.classList.toggle('has-followups',card.followups.length>0)}}
+function renderSummary(){if(tornDown||!board)return;const count=board.cards.reduce((n,c)=>n+c.followups.length,0);$('summary').replaceChildren(el('strong','',String(board.cards.length)),document.createTextNode(' 道题 · '+count+' 次追问'));for(const card of board.cards){const v=views.get(card.id);v?.nav?.classList.toggle('has-followups',card.followups.length>0)}}
 function renderBoard(){
+if(tornDown)return;
 $('board-section').hidden=!board;$('empty').hidden=Boolean(board);if(!board)return;put($('board-title'),board.title);if($('search').value!==ui.filter)$('search').value=ui.filter;
 const ids=new Set(board.cards.map(c=>c.id));for(const[id,v]of views)if(!ids.has(id)){v.root.remove();v.nav?.remove();views.delete(id)}
 board.cards.forEach((card,index)=>{renderCard(card);const v=views.get(card.id),current=$('cards').children[index];if(current!==v.root)$('cards').insertBefore(v.root,current??null);
@@ -113,7 +137,7 @@ if(!v.nav){const nav=el('button','nav-number',String(card.index).padStart(2,'0')
 $('no-matches').hidden=board.cards.some(c=>!views.get(c.id).root.hidden);renderSummary()
 }
 async function submitQuestion(cardId,retry=null){
-if(!board||busy.has(cardId))return;
+if(tornDown||!board||busy.has(cardId))return;
 const draft=retry?.draft??String(ui.drafts[cardId]??'').trim();if(!draft)return;
 const quote=retry?.quote??String(ui.quotes[cardId]??'');
 const request={requestId:retry?.requestId??requestId(),question:retry?.question??(quote?'关于这段内容：「'+quote+'」\n\n'+draft:draft),draft,quote,delivery:retry?.delivery??'not-sent',phase:'preparing'},requestedBoardId=board.id;
@@ -154,13 +178,25 @@ if(board?.id!==requestedBoardId)return;
 if(!completed)throw new Error('还没有收到此题的解答，请稍后检查。');
 if(String(ui.drafts[cardId]??'').trim()===request.draft)ui.drafts[cardId]='';
 if(String(ui.quotes[cardId]??'')===request.quote)delete ui.quotes[cardId];
-}catch(error){if(board?.id===requestedBoardId)ui.failed[cardId]={...request,error:readableError(error)}}
-finally{busy.delete(cardId);delete ui.activeRequests[cardId];persist();renderCard(currentCard(cardId))}
+}catch(error){if(!tornDown&&board?.id===requestedBoardId)ui.failed[cardId]={...request,error:readableError(error)}}
+finally{if(!tornDown){busy.delete(cardId);delete ui.activeRequests[cardId];persist();renderCard(currentCard(cardId))}}
 }
 function bounded(promise,timeout){
-let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('等待超时。')),timeout)})]).finally(()=>clearTimeout(timer))
+if(tornDown)return Promise.reject(closedError());
+let timer,onAbort;
+const interrupted=new Promise((_,reject)=>{onAbort=()=>reject(closedError());viewLifetime.signal.addEventListener('abort',onAbort,{once:true});timer=setTimeout(()=>reject(new Error('等待超时。')),timeout)});
+return Promise.race([promise,interrupted]).finally(()=>{clearTimeout(timer);viewLifetime.signal.removeEventListener('abort',onAbort)})
+}
+function waitDelay(ms){
+if(tornDown)return Promise.reject(closedError());
+return new Promise((resolve,reject)=>{
+let timer;const cleanup=()=>{clearTimeout(timer);viewLifetime.signal.removeEventListener('abort',onAbort)};
+const onAbort=()=>{cleanup();reject(closedError())};
+viewLifetime.signal.addEventListener('abort',onAbort,{once:true});timer=setTimeout(()=>{cleanup();resolve()},ms);
+})
 }
 async function sendToCurrentChat(prompt){
+assertViewActive();
 if(demoMode)throw new Error('演示模式不会向宿主发送消息。');
 if(standardReady){
   try{
@@ -183,18 +219,22 @@ if(window.parent!==window){
 const error=new Error('当前客户端未提供对话追问能力。请从 ChatGPT 中打开本插件。');error.definitelyNotSent=true;throw error
 }
 function pauseForVisibility(deadline){
+if(tornDown)return Promise.reject(closedError());
 if(!document.hidden)return Promise.resolve();
-return new Promise(resolve=>{
+return new Promise((resolve,reject)=>{
   let timer;
-  const finish=()=>{document.removeEventListener('visibilitychange',onVisible);clearTimeout(timer);resolve()};
+  const finish=error=>{document.removeEventListener('visibilitychange',onVisible);viewLifetime.signal.removeEventListener('abort',onAbort);clearTimeout(timer);error?reject(error):resolve()};
   const onVisible=()=>{if(!document.hidden)finish()};
+  const onAbort=()=>finish(closedError());
   document.addEventListener('visibilitychange',onVisible);
-  timer=setTimeout(finish,Math.max(1,deadline-Date.now()));
+  viewLifetime.signal.addEventListener('abort',onAbort,{once:true});
+  timer=setTimeout(()=>finish(),Math.max(1,deadline-Date.now()));
 })
 }
 async function waitForAnswer(boardId,cardId,request){
 const deadline=Date.now()+5*60*1000;
 while(Date.now()<deadline){
+  assertViewActive();
   if(board?.id!==boardId)return null;
   const already=currentCard(cardId)?.followups.find(f=>f.requestId===request.requestId);if(already)return already;
   if(document.hidden){request.phase='paused';renderCard(currentCard(cardId));await pauseForVisibility(deadline);if(Date.now()>=deadline)break}
@@ -205,30 +245,65 @@ while(Date.now()<deadline){
   const answer=Array.isArray(data.card.followups)?data.card.followups.find(f=>f.requestId===request.requestId):null;
   if(answer){if(!applyResult({boardId,cardId,followup:answer}))throw new Error('未收到此题的有效解答。');return answer}
   if(data.request.state==='completed')throw new Error('追问已完成，但解答尚未显示；请稍后检查。');
-  await new Promise(resolve=>setTimeout(resolve,Math.min(2000,Math.max(1,deadline-Date.now()))));
+  await waitDelay(Math.min(2000,Math.max(1,deadline-Date.now())));
 }
 throw new Error('尚未收到题内解答，已停止自动检查。请查看当前对话的进度，再点「检查这次解答」；这不会重复发送已发起的追问。');
 }
 async function callTool(name,args,timeout=90000){
-if(demoMode){await new Promise(resolve=>setTimeout(resolve,650));const card=board.cards.find(c=>c.id===args.cardId),preset=demoLessons[card.index-1][2];return{structuredContent:{boardId:board.id,cardId:args.cardId,followup:{requestId:args.requestId,question:args.question,answer:'【演示预设答复】\n'+preset+'\n\n这段文字是预先编写的示例，没有根据你的追问生成；正式连接 AI 后，这里会显示针对你问题的解答。'}}}}
+assertViewActive();
+if(demoMode){await waitDelay(650);const card=board.cards.find(c=>c.id===args.cardId),preset=demoLessons[card.index-1][2];return{structuredContent:{boardId:board.id,cardId:args.cardId,followup:{requestId:args.requestId,question:args.question,answer:'【演示预设答复】\n'+preset+'\n\n这段文字是预先编写的示例，没有根据你的追问生成；正式连接 AI 后，这里会显示针对你问题的解答。'}}}}
 if(standardReady)return rpcRequest('tools/call',{name,arguments:args},timeout);
 if(typeof window.openai?.callTool==='function')return bounded(Promise.resolve().then(()=>window.openai.callTool(name,args)),timeout);
 if(window.parent!==window){await initializeBridge();return rpcRequest('tools/call',{name,arguments:args},timeout)}
 throw new Error('尚未连接 ChatGPT 插件运行环境。请从 ChatGPT 中打开题目卡片后再追问。')
 }
-function rpcRequest(method,params,timeout=8000){return new Promise((resolve,reject)=>{const id=++rpcId,timer=setTimeout(()=>{rpcPending.delete(id);reject(new Error('连接等待超时，请重试。'))},timeout);rpcPending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},hostOrigin)})}
-function initializeBridge(){if(standardReady)return Promise.resolve();if(bridgePromise)return bridgePromise;bridgePromise=rpcRequest('ui/initialize',{appInfo:{name:'inline-qa-widget',version:'0.3.1'},appCapabilities:{},protocolVersion:'2026-01-26'}).then(()=>{standardReady=true;window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},hostOrigin);lastHeight=0;notifySize()}).catch(error=>{bridgePromise=null;throw error});return bridgePromise}
+function rpcRequest(method,params,timeout=8000){
+if(tornDown)return Promise.reject(closedError());
+return new Promise((resolve,reject)=>{
+const id=++rpcId,timer=setTimeout(()=>{rpcPending.delete(id);reject(new Error('连接等待超时，请重试。'))},timeout);
+rpcPending.set(id,{resolve,reject,timer});
+try{window.parent.postMessage({jsonrpc:'2.0',id,method,params},hostOrigin)}catch(error){clearTimeout(timer);rpcPending.delete(id);reject(error)}
+})
+}
+function initializeBridge(){
+if(tornDown)return Promise.reject(closedError());
+if(standardReady)return Promise.resolve();if(bridgePromise)return bridgePromise;
+bridgePromise=rpcRequest('ui/initialize',{appInfo:{name:'inline-qa-widget',version:'0.3.2'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'}).then(result=>{
+assertViewActive();
+if(!obj(result)||result.protocolVersion!=='2026-01-26')throw new Error('当前客户端未完成兼容的题卡连接，请重试。');
+hostCapabilities=obj(result.hostCapabilities)?result.hostCapabilities:{};
+standardReady=true;window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},hostOrigin);lastHeight=0;notifySize();
+}).catch(error=>{bridgePromise=null;showBridgeError(error);throw error});
+return bridgePromise
+}
 window.addEventListener('message',event=>{
-if(demoMode||event.source!==window.parent||!obj(event.data)||event.data.jsonrpc!=='2.0'||hostOrigin!=='*'&&event.origin!==hostOrigin)return;const m=event.data;
-if(typeof m.id==='number'&&rpcPending.has(m.id)){if(hostOrigin==='*'&&event.origin&&event.origin!=='null')hostOrigin=event.origin;const p=rpcPending.get(m.id);clearTimeout(p.timer);rpcPending.delete(m.id);if(m.error)p.reject(m.error);else p.resolve(m.result);return}
-if(m.method==='ui/notifications/tool-result')try{applyResult(m.params)}catch(error){put($('board-error'),readableError(error));$('board-error').hidden=false}
+if(demoMode||event.source!==window.parent||!obj(event.data)||event.data.jsonrpc!=='2.0'||hostOrigin!=='*'&&event.origin!==hostOrigin)return;
+const m=event.data,hasId=typeof m.id==='string'||Number.isInteger(m.id);
+const replyOrigin=event.origin&&event.origin!=='null'?event.origin:hostOrigin;
+const respond=payload=>window.parent.postMessage({jsonrpc:'2.0',id:m.id,...payload},replyOrigin);
+// The host and the app have separate request ID spaces. A host request is never our response.
+if(typeof m.method==='string'){
+  if(hasId){
+    if(m.method==='ping')respond({result:{}});
+    else if(m.method==='ui/resource-teardown'){teardownView();respond({result:{}})}
+    else respond({error:{code:-32601,message:'Method not found'}});
+  }else if(m.method==='ui/notifications/tool-result'&&!tornDown){
+    try{applyResult(m.params)}catch(error){put($('board-error'),readableError(error));$('board-error').hidden=false}
+  }
+  return;
+}
+if(hasId&&rpcPending.has(m.id)&&(Object.hasOwn(m,'result')||Object.hasOwn(m,'error'))){
+  if(hostOrigin==='*'&&event.origin&&event.origin!=='null')hostOrigin=event.origin;
+  const p=rpcPending.get(m.id);clearTimeout(p.timer);rpcPending.delete(m.id);
+  if(Object.hasOwn(m,'error'))p.reject(m.error);else p.resolve(m.result);
+}
 });
-window.addEventListener('openai:set_globals',event=>{if(demoMode)return;const globals=event.detail?.globals??{};if(!board&&globals.widgetState)restoreState(globals.widgetState);if(globals.toolOutput!==undefined)try{applyResult(globals.toolOutput)}catch(error){put($('board-error'),readableError(error));$('board-error').hidden=false}});
+window.addEventListener('openai:set_globals',event=>{if(tornDown||demoMode)return;const globals=event.detail?.globals??{};if(!board&&globals.widgetState)restoreState(globals.widgetState);if(globals.toolOutput!==undefined)try{applyResult(globals.toolOutput)}catch(error){put($('board-error'),readableError(error));$('board-error').hidden=false}});
 function captureSelection(){const selection=window.getSelection();if(!selection||selection.isCollapsed||!selection.rangeCount)return;const range=selection.getRangeAt(0),node=range.commonAncestorContainer,container=node.nodeType===Node.ELEMENT_NODE?node:node.parentElement,card=container?.closest?.('.card');if(!card||!card.contains(range.startContainer)||!card.contains(range.endContainer))return;const text=selection.toString().trim().slice(0,2500);if(text)selectedQuotes.set(card.dataset.cardId,text)}
 document.addEventListener('selectionchange',captureSelection);
 $('search').addEventListener('input',()=>{ui.filter=$('search').value;persist();renderBoard()});
 if(demoMode){put($('mode-pill'),'交互演示 · 预设答复，未连接 AI');put($('notice'),'这是交互演示，所有解答均为预设内容。试着在第 3 题追问，答复会留在同一张卡片里。');put($('footer-mode'),'演示模式 · 未连接 AI');try{const saved=JSON.parse(sessionStorage.getItem('inline-qa-demo-ui')??'null');if(saved)restoreState({inlineQA:saved})}catch(_){}applyResult({board:makeDemoBoard()})}
-else{put($('mode-pill'),'当前 ChatGPT 回答');put($('notice'),'使用当前 ChatGPT 的回答能力，消耗正常 Chat / Work 使用额度，无需独立 API 密钥。将在当前对话发起追问，对话中可能显示追问与调用记录，解答会放回原题卡片。');put($('footer-mode'),'当前对话发起追问 · 题内呈现解答');restoreState(window.openai?.widgetState);try{if(window.openai?.toolOutput)applyResult(window.openai.toolOutput)}catch(error){put($('board-error'),readableError(error));$('board-error').hidden=false}if(window.parent!==window)initializeBridge().catch(()=>{if(!board)put($('empty-copy'),'等待 ChatGPT 提供题目数据。若长时间未显示，请重新调用插件生成卡片。')})}
+else{put($('mode-pill'),'当前 ChatGPT 回答');put($('notice'),'使用当前 ChatGPT 的回答能力，消耗正常 Chat / Work 使用额度，无需独立 API 密钥。将在当前对话发起追问，对话中可能显示追问与调用记录，解答会放回原题卡片。');put($('footer-mode'),'当前对话发起追问 · 题内呈现解答');restoreState(window.openai?.widgetState);try{if(window.openai?.toolOutput)applyResult(window.openai.toolOutput)}catch(error){put($('board-error'),readableError(error));$('board-error').hidden=false}if(window.parent!==window)initializeBridge().catch(showBridgeError)}
 // Exposes only public board data and UI state for host simulators.
 window.InlineQA={applyResult,getSnapshot:()=>({board:JSON.parse(JSON.stringify(board)),ui:JSON.parse(JSON.stringify(ui)),pending:Array.from(busy.keys())})};
 })();

@@ -1,5 +1,5 @@
 export const UI_URI = 'ui://inline-qa/widget.html';
-export const VERSION = '0.3.1';
+export const VERSION = '0.3.2';
 const objectSchema = (properties, required) => ({type:'object',properties,required,additionalProperties:false});
 const textSchema = maxLength => ({type:'string',minLength:1,maxLength});
 const idSchema = textSchema(80);
