@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {MemoryStore} from '../src/store.mjs';
-import {createService,createMcpHandler,UI_URI,LEGACY_UI_URI,VERSION} from '../src/core.mjs';
+import {createService,createMcpHandler,UI_URI,LEGACY_UI_URI,UI_CHECK_URI,VERSION} from '../src/core.mjs';
 
 const TTL=30*60*1000;
 const cards=[
@@ -229,7 +229,7 @@ test('service status reports the native host and never requires an independent A
   assert.deepEqual((await service.call('service_status',{},'alice')).status,{
     version:VERSION,storageReady:true,answerProvider:'chatgpt-host',requiresApiKey:false
   });
-  assert.equal(VERSION,'0.3.3');
+  assert.equal(VERSION,'0.3.4');
   const unavailable=setup({status:()=>({storageReady:false})}).service;
   assert.equal((await unavailable.call('service_status',{},'alice')).status.storageReady,false);
 });
@@ -248,12 +248,12 @@ test('MCP discovery supports 2026-07-28 and exposes host follow-up tools without
   assert.equal(discovery.result.resultType,'complete');
   const initialized=await rpc('initialize',{protocolVersion:'2026-07-28'});
   assert.equal(initialized.result.protocolVersion,'2026-07-28');
-  assert.equal(initialized.result.serverInfo.version,'0.3.3');
+  assert.equal(initialized.result.serverInfo.version,'0.3.4');
   const listed=await rpc('tools/list');
   assert.equal(listed.result.resultType,'complete');
   const tools=listed.result.tools;
   assert.deepEqual(tools.map(tool=>tool.name).sort(),[
-    'ask_card','create_board','get_board','get_card_request','open_board','service_status','submit_card_answer'
+    'ask_card','check_ui','create_board','get_board','get_card_request','open_board','report_ui_stage','service_status','submit_card_answer'
   ].sort());
   assert.deepEqual(tools.find(tool=>tool.name==='ask_card')._meta.ui.visibility,['app']);
   for(const name of ['get_card_request','submit_card_answer','get_board']) {
@@ -347,7 +347,7 @@ function assertOutputSchema(schema,value,path='$') {
 }
 
 
-test('all seven tools return complete results conforming to their declared output schemas and JSON fallback',async()=>{
+test('all nine tools return complete results conforming to their declared output schemas and JSON fallback',async()=>{
   const {service}=setup();const handler=createMcpHandler(service,'<html>widget</html>');
   let rpcId=0;
   const rpc=async(method,params)=>{
@@ -364,7 +364,7 @@ test('all seven tools return complete results conforming to their declared outpu
   const listed=await rpc('tools/list');
   const definitions=new Map(listed.tools.map(tool=>[tool.name,tool]));
   const required={
-    service_status:['status'],create_board:['board'],open_board:['board'],get_board:['board'],
+    check_ui:['uiCheck'],report_ui_stage:['recorded'],service_status:['status'],create_board:['board'],open_board:['board'],get_board:['board'],
     ask_card:['boardId','cardId','request'],get_card_request:['boardId','cardId','request','card'],
     submit_card_answer:['boardId','cardId','followup']
   };
@@ -377,6 +377,10 @@ test('all seven tools return complete results conforming to their declared outpu
   const call=async(name,args)=>{
     const result=await rpc('tools/call',{name,arguments:args});
     assert.equal(result.isError,undefined,name+': successful result');
+    if(['create_board','open_board'].includes(name)){
+      assert.match(result.content[0].text,/工具成功不代表客户端显示成功/);
+      assert.match(definitions.get(name).description,/Do not claim it is visible without UI evidence/);
+    }
     assertOutputSchema(definitions.get(name).outputSchema,result.structuredContent,name);
     const serialized=result.content.find(item=>item.type==='text'&&item.annotations?.audience?.includes('assistant')&&item.text.trim().startsWith('{'));
     assert.ok(serialized,name+': assistant-visible JSON fallback');
@@ -384,8 +388,10 @@ test('all seven tools return complete results conforming to their declared outpu
     called.add(name);
     return result.structuredContent;
   };
+  assert.deepEqual(await call('check_ui',{}),{uiCheck:{version:VERSION}});
+  assert.deepEqual(await call('report_ui_stage',{phase:'bridge_initialized'}),{recorded:true});
   const status=await call('service_status',{});
-  assert.equal(status.status.version,'0.3.3');
+  assert.equal(status.status.version,'0.3.4');
   const created=await call('create_board',{title:'真实返回结构',cards});
   const b=created.board,args=ids(b,1,'schema-followup');
   assert.equal(b.cards.length,2);
@@ -428,11 +434,11 @@ test('legacy MCP initialize and resource access stay compatible without a modern
   };
   const initialized=await rpc('initialize',{protocolVersion:'2025-03-26'});
   assert.equal(initialized.protocolVersion,'2025-03-26');
-  assert.equal(initialized.serverInfo.version,'0.3.3');
+  assert.equal(initialized.serverInfo.version,'0.3.4');
   const resource=await rpc('resources/read',{uri:UI_URI});
   assert.equal(resource.contents[0].text,'<html>legacy widget</html>');
   const status=await rpc('tools/call',{name:'service_status',arguments:{}});
-  assert.equal(status.structuredContent.status.version,'0.3.3');
+  assert.equal(status.structuredContent.status.version,'0.3.4');
   assert.equal(status.isError,undefined);
 });
 
@@ -461,7 +467,7 @@ test('versioned renderer pointers and old-resource alias keep existing boards un
     assert.equal(descriptor._meta['openai/outputTemplate'],UI_URI);
   }
   const resources=await rpc('resources/list',{});
-  assert.deepEqual(resources.result.resources.map(resource=>resource.uri),[UI_URI]);
+  assert.deepEqual(resources.result.resources.map(resource=>resource.uri),[UI_URI,UI_CHECK_URI]);
   for(const version of ['2026-07-28','2025-11-25']) {
     for(const uri of [UI_URI,LEGACY_UI_URI]) {
       const response=await rpc('resources/read',{uri},version);
@@ -491,7 +497,7 @@ test('resource diagnostics whitelist fixed fields and sanitize protocol metadata
   const response=await (await handler(request,'private-owner-marker')).json();
   assert.equal(response.result.contents[0].uri,UI_URI);
   assert.deepEqual(events[0],{
-    event:'inline-qa.resource-read',templateUri:UI_URI,requestedUri:UI_URI,version:'0.3.3',
+    event:'inline-qa.resource-read',templateUri:UI_URI,requestedUri:UI_URI,version:'0.3.4',
     mimeType:'text/html;profile=mcp-app',htmlBytes:new TextEncoder().encode(html).length,
     headerProtocolVersion:'2026-07-28',bodyProtocolVersion:'2026-07-28'
   });
@@ -540,6 +546,142 @@ test('throwing, rejecting or pending resource diagnostic callbacks cannot break 
     assert.equal(envelope.error,undefined);
     assert.equal(envelope.result.resultType,'complete');
     assert.equal(envelope.result.contents[0].text,html);
+    assert.equal(JSON.stringify(envelope).includes('private-'),false);
+  }
+  await Promise.resolve();
+});
+
+
+
+test('independent UI check uses its own resource and leaves a saved 29-card board unchanged',async()=>{
+  assert.equal(UI_CHECK_URI,'ui://inline-qa/ui-check-v0.3.4.html');
+  assert.equal(UI_URI,'ui://inline-qa/widget-v0.3.3.html');
+  assert.equal(LEGACY_UI_URI,'ui://inline-qa/widget.html');
+  const {service,store}=setup();
+  const saved=(await service.call('create_board',{
+    title:'已保存的 29 道概率题',
+    cards:Array.from({length:29},(_,index)=>({question:'概率题 '+(index+1),answer:'原答案 '+(index+1)}))
+  },'alice')).board;
+  await queue(service,ids(saved,4,'keep-pending'),'保留已有的待回答问题');
+  const before=await store.read('alice',saved.id);
+  const normalHtml='<html>normal board</html>',checkHtml='<html>独立检测 🧩</html>',resources=[];
+  const handler=createMcpHandler(service,normalHtml,{uiCheckHtml:checkHtml,onResourceRead:entry=>resources.push(entry)});
+  const rpc=async(method,params,version='2026-07-28')=>(await handler(resourceTestRequest(method,params,version),'alice')).json();
+  const listed=(await rpc('tools/list',{})).result.tools;
+  const check=listed.find(tool=>tool.name==='check_ui'),stage=listed.find(tool=>tool.name==='report_ui_stage');
+  assert.equal(check._meta.ui.resourceUri,UI_CHECK_URI);
+  assert.equal(check._meta['openai/outputTemplate'],UI_CHECK_URI);
+  assert.deepEqual(check._meta.ui.visibility,['model','app']);
+  assert.deepEqual(check.inputSchema,{type:'object',properties:{},required:[],additionalProperties:false});
+  assert.deepEqual(stage._meta.ui.visibility,['app']);
+  assert.equal(stage._meta.ui.resourceUri,undefined);
+  assert.equal(stage._meta['openai/outputTemplate'],undefined);
+  assert.equal(stage.inputSchema.additionalProperties,false);
+  assert.deepEqual(stage.inputSchema.properties.phase.enum,['script_started','bridge_initialized','tool_result_received','view_ready']);
+  for(const name of ['create_board','open_board']){
+    const tool=listed.find(item=>item.name===name);
+    assert.equal(tool._meta.ui.resourceUri,UI_URI);
+    assert.equal(tool._meta['openai/outputTemplate'],UI_URI);
+  }
+  assert.deepEqual((await rpc('tools/call',{name:'check_ui',arguments:{}})).result.structuredContent,{uiCheck:{version:VERSION}});
+  for(const phase of stage.inputSchema.properties.phase.enum){
+    assert.deepEqual((await rpc('tools/call',{name:'report_ui_stage',arguments:{phase}})).result.structuredContent,{recorded:true});
+  }
+  for(const version of ['2026-07-28','2025-11-25']){
+    const result=(await rpc('resources/read',{uri:UI_CHECK_URI},version)).result;
+    assert.equal(result.resultType,version==='2026-07-28'?'complete':undefined);
+    assert.equal(result.contents[0].uri,UI_CHECK_URI);
+    assert.equal(result.contents[0].text,checkHtml);
+    assert.equal(result.contents[0].mimeType,'text/html;profile=mcp-app');
+    assert.deepEqual(result.contents[0]._meta.ui.csp,{connectDomains:[],resourceDomains:[]});
+    assert.deepEqual(result.contents[0]._meta['openai/ui'].availableDisplayModes,['inline','fullscreen']);
+  }
+  for(const uri of [UI_URI,LEGACY_UI_URI]){
+    assert.equal((await rpc('resources/read',{uri})).result.contents[0].text,normalHtml);
+  }
+  assert.equal(resources[0].templateUri,UI_CHECK_URI);
+  assert.equal(resources[0].requestedUri,UI_CHECK_URI);
+  assert.equal(resources[0].htmlBytes,new TextEncoder().encode(checkHtml).length);
+  assert.equal(resources[2].templateUri,UI_URI);
+  assert.deepEqual(await store.read('alice',saved.id),before);
+  const refreshed=(await service.call('open_board',{boardId:saved.id},'alice')).board;
+  assert.equal(refreshed.cards.length,29);
+  assert.equal(refreshed.id,saved.id);
+  assert.equal(refreshed.cards[4].question,saved.cards[4].question);
+});
+
+
+test('UI diagnostics require an owner, strictly validate arguments and never access board storage',async()=>{
+  let dbCalls=0;const bomb=()=>{dbCalls++;throw new Error('diagnostics must not access storage')};
+  const service=createService({read:bomb,create:bomb,compareAndSwap:bomb});
+  const stages=[];const handler=createMcpHandler(service,'<html>board</html>',{
+    uiCheckHtml:'<html>check</html>',onUiStage:entry=>stages.push(entry)
+  });
+  const invoke=async(name,args,owner='alice')=>handler(resourceTestRequest('tools/call',{name,arguments:args}),owner);
+  assert.deepEqual(await service.call('check_ui',{},'alice'),{uiCheck:{version:VERSION}});
+  assert.deepEqual(await service.call('report_ui_stage',{phase:'script_started'},'alice'),{recorded:true});
+  for(const [name,args]of [['check_ui',{}],['report_ui_stage',{phase:'view_ready'}]]){
+    await assert.rejects(service.call(name,args,''),/登录/);
+    assert.equal((await invoke(name,args,null)).status,401);
+  }
+  const invalid=[
+    ['check_ui',{question:'private-question-marker'}],['check_ui',null],['check_ui',[]],['check_ui','value'],
+    ['report_ui_stage',{}],['report_ui_stage',{phase:'not-a-stage'}],['report_ui_stage',{phase:7}],
+    ['report_ui_stage',{phase:['view_ready']}],['report_ui_stage',{phase:'view_ready',answer:'private-answer-marker'}],
+    ['report_ui_stage',null],['report_ui_stage',[]]
+  ];
+  for(const[name,args]of invalid){
+    await assert.rejects(service.call(name,args,'alice'),/参数无效|阶段无效/);
+    const result=await (await invoke(name,args)).json();
+    assert.equal(result.result.isError,true);
+    assert.equal(result.result.structuredContent,undefined);
+  }
+  await assert.rejects(service.call('report_ui_stage',Object.create({phase:'view_ready'}),'alice'),/阶段无效/);
+  assert.equal(dbCalls,0);
+  assert.deepEqual(stages,[]);
+  const unconfigured=createMcpHandler(service,'<html>board</html>');
+  const missing=await (await unconfigured(resourceTestRequest('resources/read',{uri:UI_CHECK_URI}),'alice')).json();
+  assert.equal(missing.error.code,-32601,'an absent diagnostic asset must not become an empty or undefined HTML resource');
+});
+
+
+test('UI stage callbacks expose only a validated fixed phase and never request or identity data',async()=>{
+  const {service}=setup();const events=[];
+  const handler=createMcpHandler(service,'<html>board</html>',{uiCheckHtml:'<html>check</html>',onUiStage:event=>events.push(event)});
+  const phases=['script_started','bridge_initialized','tool_result_received','view_ready'];
+  for(const phase of phases){
+    const request=resourceTestRequest('tools/call',{
+      name:'report_ui_stage',arguments:{phase},
+      _meta:{privateQuestion:'private-question-marker',privatePayload:'private-payload-marker'}
+    },'2026-07-28',{'Authorization':'Bearer private-auth-marker'});
+    const result=await (await handler(request,'private-owner-marker')).json();
+    assert.deepEqual(result.result.structuredContent,{recorded:true});
+  }
+  assert.deepEqual(events,phases.map(phase=>({event:'inline-qa.ui-stage',version:VERSION,templateUri:UI_CHECK_URI,phase})));
+  for(const event of events){assert.deepEqual(Object.keys(event).sort(),['event','phase','templateUri','version']);assert.ok(Object.isFrozen(event));}
+  const serialized=JSON.stringify(events);
+  for(const marker of ['private-question-marker','private-payload-marker','private-auth-marker','private-owner-marker','boardId','requestId','id']){
+    assert.equal(serialized.includes('"'+marker+'"'),false);
+  }
+  assert.equal(serialized.includes('private-'),false);
+  await handler(resourceTestRequest('tools/call',{name:'check_ui',arguments:{}}),'alice');
+  await handler(resourceTestRequest('resources/read',{uri:UI_CHECK_URI}),'alice');
+  await handler(resourceTestRequest('tools/call',{name:'service_status',arguments:{}}),'alice');
+  assert.equal(events.length,4,'other calls and reads do not report a stage');
+});
+
+
+test('UI stage callback failures and pending callbacks do not prevent a successful diagnostic reply',async()=>{
+  const {service}=setup();
+  const callbacks=[()=>{throw Error('private-stage-error')},async()=>{throw Error('private-async-stage-error')},()=>new Promise(()=>{})];
+  for(const onUiStage of callbacks){
+    const handler=createMcpHandler(service,'<html>board</html>',{uiCheckHtml:'<html>check</html>',onUiStage});
+    const response=await handler(resourceTestRequest('tools/call',{name:'report_ui_stage',arguments:{phase:'bridge_initialized'}}),'alice');
+    assert.equal(response.status,200);
+    const envelope=await response.json();
+    assert.equal(envelope.result.isError,undefined);
+    assert.equal(envelope.result.resultType,'complete');
+    assert.deepEqual(envelope.result.structuredContent,{recorded:true});
     assert.equal(JSON.stringify(envelope).includes('private-'),false);
   }
   await Promise.resolve();

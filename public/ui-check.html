@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>互动答题板 · 界面诊断</title>
+<style>
+:root{font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif;color:#24392e;background:#f6f6f0}*{box-sizing:border-box}body{margin:0}main{max-width:620px;margin:auto;padding:22px}header{display:flex;justify-content:space-between;align-items:center;gap:12px}h1{font-size:20px;margin:0}small{color:#657267;font-size:11px}.intro{color:#657267;margin:8px 0 18px;font-size:12px}ol{padding:0;margin:0;list-style:none;display:grid;gap:10px}li{display:flex;gap:12px;align-items:flex-start;padding:13px;background:#fffefa;border:1px solid #d9ded3;border-radius:9px}.dot{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:#eee;color:#697367;font-size:11px}li[data-state=done] .dot{background:#e6efdf;color:#2e613e}li[data-state=error] .dot{background:#fae6df;color:#8b3d2f}h2{font-size:14px;margin:0}li p{font-size:12px;color:#657267;margin:3px 0 0}#summary{padding:10px 12px;border-radius:7px;background:#e9efdf;font-size:12px;margin:16px 0 0}footer{font-size:10px;color:#7c857a;margin-top:12px}noscript{display:block;color:#8b3d2f;margin:12px 0}
+</style>
+</head>
+<body><main>
+<header><h1>界面连接诊断</h1><small>0.3.4</small></header>
+<p class="intro">逐步确认界面加载到了哪一层。此页面不读取题库，也不会发送聊天消息。</p>
+<ol>
+<li id="html" data-state="done"><span class="dot">1</span><div><h2>HTML 已送达</h2><p>看到本页，说明界面文件已被显示。</p></div></li>
+<li id="script" data-state="waiting"><span class="dot">2</span><div><h2>JS 启动</h2><p id="script-note">尚未确认脚本运行到这一标记。</p></div></li>
+<li id="bridge" data-state="waiting"><span class="dot">3</span><div><h2>宿主连接</h2><p id="bridge-note">等待脚本发起标准连接。</p></div></li>
+<li id="result" data-state="waiting"><span class="dot">4</span><div><h2>工具结果到达</h2><p id="result-note">等待宿主送达工具结果。</p></div></li>
+</ol>
+<p id="summary">HTML 已显示；接下来确认脚本和宿主连接。</p>
+<noscript>脚本未启用：HTML 已显示，但 JS 启动和宿主连接无法继续。</noscript>
+<footer>只记录四个固定阶段；没有自动重试。</footer>
+</main>
+<script>
+(()=>{
+'use strict';
+const version='2026-01-26',initId='ui-check-init',parent=window.parent;
+const reported=new Set();
+let connected=false,finished=false,resultSeen=false,ended=false,origin='*',counter=0,lastHeight=0;
+const node=id=>document.getElementById(id);
+const mark=(id,text,state)=>{node(id).dataset.state=state;node(id+'-note').textContent=text;size()};
+const send=message=>{if(!ended)parent.postMessage(message,origin)};
+function size(){if(!connected||ended)return;const height=Math.ceil(document.querySelector('main').getBoundingClientRect().height);if(height===lastHeight)return;lastHeight=height;send({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:{height}})}
+function report(phase){
+if(ended||reported.has(phase))return;
+if(connected){reported.add(phase);send({jsonrpc:'2.0',id:'ui-check-stage-'+(++counter),method:'tools/call',params:{name:'report_ui_stage',arguments:{phase}}})}
+else if(phase==='script_started'&&typeof window.openai?.callTool==='function'){reported.add(phase);try{Promise.resolve(window.openai.callTool('report_ui_stage',{phase})).catch(()=>{})}catch(_){}}
+}
+function arrived(value){
+const data=value?.structuredContent??value;
+if(data?.uiCheck?.version!=='0.3.4')return;
+resultSeen=true;
+mark('result',connected?'工具结果已到达；这里只确认送达。':'已收到工具结果，等待标准连接确认。','done');
+confirmResult();
+}
+function confirmResult(){
+if(!connected||!resultSeen)return;
+mark('result','本诊断工具结果已到达；这里只确认送达。','done');
+report('tool_result_received');report('view_ready');
+node('summary').textContent='本诊断面板的四个阶段已完成；不代表原题板已恢复。';
+}
+function failure(kind){
+if(finished||ended)return;finished=true;clearTimeout(timer);
+mark('bridge',kind==='timeout'?'10 秒内没有收到标准连接回应；HTML 和脚本均已运行。':kind==='version'?'宿主回应的协议版本不匹配；标准连接未完成。':'宿主拒绝标准连接；HTML 和脚本均已运行。','error');
+node('summary').textContent='停在宿主连接阶段；这不等于 HTML 或脚本没有运行。';
+}
+window.addEventListener('message',event=>{
+if(ended||event.source!==parent||!event.data||event.data.jsonrpc!=='2.0'||origin!=='*'&&event.origin!==origin)return;
+const m=event.data;
+// Classify host requests before responses: its ID may equal our initialization ID.
+if(typeof m.method==='string'){
+if(m.method==='ping'&&m.id!==undefined){send({jsonrpc:'2.0',id:m.id,result:{}});return}
+if(m.method==='ui/resource-teardown'&&m.id!==undefined){send({jsonrpc:'2.0',id:m.id,result:{}});ended=true;clearTimeout(timer);return}
+if(m.method==='ui/notifications/tool-result')arrived(m.params);
+return;
+}
+if(m.id!==initId||finished)return;
+if(m.error){failure('rejected');return}
+if(m.result?.protocolVersion!==version){failure('version');return}
+finished=true;connected=true;clearTimeout(timer);
+if(event.origin&&event.origin!=='null')origin=event.origin;
+send({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}});
+mark('bridge','标准宿主连接已确认，协议版本匹配。','done');
+node('summary').textContent='标准连接已完成，正在等待工具结果。';
+report('script_started');report('bridge_initialized');
+if(resultSeen)confirmResult();
+size();
+});
+mark('script','脚本已启动；本行由 JS 写入。','done');
+mark('bridge','正在发起一次标准连接，最长等待 10 秒。','waiting');
+node('summary').textContent='HTML 和脚本已运行；正在确认宿主连接。';
+report('script_started');
+if(window.openai?.toolOutput!==undefined&&window.openai.toolOutput!==null)arrived(window.openai.toolOutput);
+const timer=setTimeout(()=>failure('timeout'),10000);
+send({jsonrpc:'2.0',id:initId,method:'ui/initialize',params:{appInfo:{name:'inline-qa-ui-check',version:'0.3.4'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:version}});
+if(typeof ResizeObserver==='function')new ResizeObserver(size).observe(document.querySelector('main'));
+})();
+</script></body></html>

@@ -25,7 +25,8 @@ const store=new FileStore();
 try{store.records=new Map(JSON.parse(await readFile(dataPath,'utf8')));}catch(error){if(error.code!=='ENOENT')throw error;}
 const widget=await readFile(path.join(root,'public','widget.html'),'utf8');
 const service=createService(store,{status:()=>({storageReady:true})});
-const mcp=createMcpHandler(service,widget);
+const uiCheckHtml=await readFile(path.join(root,'public','ui-check.html'),'utf8');
+const mcp=createMcpHandler(service,widget,{uiCheckHtml});
 const port=Number(process.env.PORT||8787);
 http.createServer(async(req,res)=>{
   try{

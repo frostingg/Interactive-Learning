@@ -1,7 +1,7 @@
 import {D1Store} from './store.mjs';
 import {createService,createMcpHandler,VERSION} from './core.mjs';
 // scripts/build.mjs embeds the self-contained HTML assets in this module.
-import {widgetHtml,demoHtml} from './generated-ui.mjs';
+import {widgetHtml,demoHtml,uiCheckHtml} from './generated-ui.mjs';
 export default {
   async fetch(request,env) {
     const url=new URL(request.url);
@@ -12,7 +12,7 @@ export default {
       // Trust this header only behind the Sites authenticated dispatch boundary.
       // Do not expose this Worker on a public origin without authentication.
       const service=createService(new D1Store(env.DB),{status:()=>({storageReady:!!env.DB})});
-      return createMcpHandler(service,widgetHtml,{onResourceRead:diagnostic=>console.info(JSON.stringify(diagnostic))})(request,owner);
+      return createMcpHandler(service,widgetHtml,{uiCheckHtml,onResourceRead:diagnostic=>console.info(JSON.stringify(diagnostic)),onUiStage:diagnostic=>console.info(JSON.stringify(diagnostic))})(request,owner);
     }
     if(url.pathname==='/' || url.pathname==='/demo.html') return new Response(demoHtml,{headers:{'Content-Type':'text/html; charset=utf-8'}});
     return new Response('Not found',{status:404});
