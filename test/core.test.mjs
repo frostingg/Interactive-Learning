@@ -229,7 +229,7 @@ test('service status reports the native host and never requires an independent A
   assert.deepEqual((await service.call('service_status',{},'alice')).status,{
     version:VERSION,storageReady:true,answerProvider:'chatgpt-host',requiresApiKey:false
   });
-  assert.equal(VERSION,'0.3.5');
+  assert.equal(VERSION,'0.3.6');
   const unavailable=setup({status:()=>({storageReady:false})}).service;
   assert.equal((await unavailable.call('service_status',{},'alice')).status.storageReady,false);
 });
@@ -248,7 +248,7 @@ test('MCP discovery supports 2026-07-28 and exposes host follow-up tools without
   assert.equal(discovery.result.resultType,'complete');
   const initialized=await rpc('initialize',{protocolVersion:'2026-07-28'});
   assert.equal(initialized.result.protocolVersion,'2026-07-28');
-  assert.equal(initialized.result.serverInfo.version,'0.3.5');
+  assert.equal(initialized.result.serverInfo.version,'0.3.6');
   const listed=await rpc('tools/list');
   assert.equal(listed.result.resultType,'complete');
   const tools=listed.result.tools;
@@ -391,7 +391,7 @@ test('all nine tools return complete results conforming to their declared output
   assert.deepEqual(await call('check_ui',{}),{uiCheck:{version:VERSION}});
   assert.deepEqual(await call('report_ui_stage',{phase:'bridge_initialized'}),{recorded:true});
   const status=await call('service_status',{});
-  assert.equal(status.status.version,'0.3.5');
+  assert.equal(status.status.version,'0.3.6');
   const created=await call('create_board',{title:'真实返回结构',cards});
   const b=created.board,args=ids(b,1,'schema-followup');
   assert.equal(b.cards.length,2);
@@ -434,11 +434,11 @@ test('legacy MCP initialize and resource access stay compatible without a modern
   };
   const initialized=await rpc('initialize',{protocolVersion:'2025-03-26'});
   assert.equal(initialized.protocolVersion,'2025-03-26');
-  assert.equal(initialized.serverInfo.version,'0.3.5');
+  assert.equal(initialized.serverInfo.version,'0.3.6');
   const resource=await rpc('resources/read',{uri:UI_URI});
   assert.equal(resource.contents[0].text,'<html>legacy widget</html>');
   const status=await rpc('tools/call',{name:'service_status',arguments:{}});
-  assert.equal(status.structuredContent.status.version,'0.3.5');
+  assert.equal(status.structuredContent.status.version,'0.3.6');
   assert.equal(status.isError,undefined);
 });
 
@@ -453,7 +453,7 @@ function resourceTestRequest(method,params={},headerVersion='2026-07-28',extraHe
 
 
 test('versioned renderer pointers and old-resource alias keep existing boards unchanged',async()=>{
-  assert.equal(UI_URI,'ui://inline-qa/widget-v0.3.3.html');
+  assert.equal(UI_URI,'ui://inline-qa/widget-v0.3.6.html');
   assert.equal(LEGACY_UI_URI,'ui://inline-qa/widget.html');
   const {store,service}=setup();const b=await board(service);
   const before=await store.read('alice',b.id);
@@ -497,7 +497,7 @@ test('resource diagnostics whitelist fixed fields and sanitize protocol metadata
   const response=await (await handler(request,'private-owner-marker')).json();
   assert.equal(response.result.contents[0].uri,UI_URI);
   assert.deepEqual(events[0],{
-    event:'inline-qa.resource-read',templateUri:UI_URI,requestedUri:UI_URI,version:'0.3.5',
+    event:'inline-qa.resource-read',templateUri:UI_URI,requestedUri:UI_URI,version:'0.3.6',
     mimeType:'text/html;profile=mcp-app',htmlBytes:new TextEncoder().encode(html).length,
     headerProtocolVersion:'2026-07-28',bodyProtocolVersion:'2026-07-28'
   });
@@ -554,8 +554,8 @@ test('throwing, rejecting or pending resource diagnostic callbacks cannot break 
 
 
 test('independent UI check uses its own resource and leaves a saved 29-card board unchanged',async()=>{
-  assert.equal(UI_CHECK_URI,'ui://inline-qa/ui-check-v0.3.5.html');
-  assert.equal(UI_URI,'ui://inline-qa/widget-v0.3.3.html');
+  assert.equal(UI_CHECK_URI,'ui://inline-qa/ui-check-v0.3.6.html');
+  assert.equal(UI_URI,'ui://inline-qa/widget-v0.3.6.html');
   assert.equal(LEGACY_UI_URI,'ui://inline-qa/widget.html');
   const {service,store}=setup();
   const saved=(await service.call('create_board',{

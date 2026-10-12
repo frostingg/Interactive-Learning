@@ -1,11 +1,16 @@
 import {readFile,mkdir,writeFile,copyFile,cp} from 'node:fs/promises';
+import {loadUiHtml} from './ui-assets.mjs';
 const root=new URL('../',import.meta.url);
 const source=new URL('src/',root);
 const out=new URL('dist/server/',root);
 await mkdir(out,{recursive:true});
-const widgetHtml=await readFile(new URL('public/widget.html',root),'utf8');
-const demoHtml=await readFile(new URL('public/demo.html',root),'utf8');
+const widgetHtml=await loadUiHtml('widget.html');
+const demoHtml=await loadUiHtml('demo.html');
 const uiCheckHtml=await readFile(new URL('public/ui-check.html',root),'utf8');
+const uiOut=new URL('dist/ui/',root);
+await mkdir(uiOut,{recursive:true});
+await writeFile(new URL('widget.html',uiOut),widgetHtml,'utf8');
+await writeFile(new URL('demo.html',uiOut),demoHtml,'utf8');
 await writeFile(new URL('generated-ui.mjs',out),'export const widgetHtml='+JSON.stringify(widgetHtml)+';\nexport const demoHtml='+JSON.stringify(demoHtml)+';\nexport const uiCheckHtml='+JSON.stringify(uiCheckHtml)+';\n');
 await copyFile(new URL('worker.mjs',source),new URL('index.js',out));
 await copyFile(new URL('core.mjs',source),new URL('core.mjs',out));

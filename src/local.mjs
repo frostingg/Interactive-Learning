@@ -4,6 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {MemoryStore} from './store.mjs';
 import {createService,createMcpHandler} from './core.mjs';
+import {loadUiHtml} from '../scripts/ui-assets.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const dataPath=path.join(root,'.local-data','boards.json');
 class FileStore extends MemoryStore {
@@ -23,7 +24,7 @@ class FileStore extends MemoryStore {
 }
 const store=new FileStore();
 try{store.records=new Map(JSON.parse(await readFile(dataPath,'utf8')));}catch(error){if(error.code!=='ENOENT')throw error;}
-const widget=await readFile(path.join(root,'public','widget.html'),'utf8');
+const widget=await loadUiHtml('widget.html');
 const service=createService(store,{status:()=>({storageReady:true})});
 const uiCheckHtml=await readFile(path.join(root,'public','ui-check.html'),'utf8');
 const mcp=createMcpHandler(service,widget,{uiCheckHtml});
@@ -46,6 +47,6 @@ http.createServer(async(req,res)=>{
     const filename=url.pathname==='/widget.html'?'widget.html':url.pathname==='/'||url.pathname==='/demo.html'?'demo.html':null;
     if(!filename){res.writeHead(404);res.end();return;}
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
-    res.end(await readFile(path.join(root,'public',filename),'utf8'));
+    res.end(await loadUiHtml(filename));
   }catch{res.writeHead(500);res.end('Service unavailable');}
 }).listen(port,'127.0.0.1',()=>console.log('Interactive QA development preview: http://127.0.0.1:'+port));

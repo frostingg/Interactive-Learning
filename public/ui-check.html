@@ -8,7 +8,7 @@
 </style>
 </head>
 <body><main>
-<header><h1>界面连接诊断</h1><small>0.3.5</small></header>
+<header><h1>界面连接诊断</h1><small>0.3.6</small></header>
 <p class="intro">逐步确认界面加载到了哪一层。此页面不读取题库，也不会发送聊天消息。</p>
 <ol>
 <li id="html" data-state="done"><span class="dot">1</span><div><h2>HTML 已送达</h2><p>看到本页，说明界面文件已被显示。</p></div></li>
@@ -37,7 +37,7 @@ else if(phase==='script_started'&&typeof window.openai?.callTool==='function'){r
 }
 function arrived(value){
 const data=value?.structuredContent??value;
-if(data?.uiCheck?.version!=='0.3.5')return;
+if(data?.uiCheck?.version!=='0.3.6')return;
 resultSeen=true;
 mark('result',connected?'工具结果已到达；这里只确认送达。':'已收到工具结果，等待标准连接确认。','done');
 confirmResult();
@@ -81,7 +81,7 @@ node('summary').textContent='HTML 和脚本已运行；正在确认宿主连接�
 report('script_started');
 if(window.openai?.toolOutput!==undefined&&window.openai.toolOutput!==null)arrived(window.openai.toolOutput);
 const timer=setTimeout(()=>failure('timeout'),10000);
-send({jsonrpc:'2.0',id:initId,method:'ui/initialize',params:{appInfo:{name:'inline-qa-ui-check',version:'0.3.5'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:version}});
+send({jsonrpc:'2.0',id:initId,method:'ui/initialize',params:{appInfo:{name:'inline-qa-ui-check',version:'0.3.6'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:version}});
 if(typeof ResizeObserver==='function')new ResizeObserver(size).observe(document.querySelector('main'));
 })();
 </script></body></html>
