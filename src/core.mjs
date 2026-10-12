@@ -1,7 +1,8 @@
 export const UI_URI = 'ui://inline-qa/widget-v0.3.3.html';
 export const LEGACY_UI_URI = 'ui://inline-qa/widget.html';
-export const UI_CHECK_URI = 'ui://inline-qa/ui-check-v0.3.4.html';
-export const VERSION = '0.3.4';
+export const UI_CHECK_URI = 'ui://inline-qa/ui-check-v0.3.5.html';
+export const LEGACY_UI_CHECK_URI = 'ui://inline-qa/ui-check-v0.3.4.html';
+export const VERSION = '0.3.5';
 const UI_STAGES = ['script_started','bridge_initialized','tool_result_received','view_ready'];
 const UI_MIME = 'text/html;profile=mcp-app';
 const objectSchema = (properties, required) => ({type:'object',properties,required,additionalProperties:false});
@@ -162,8 +163,19 @@ export function createMcpHandler(service,widgetHtml,{onResourceRead,uiCheckHtml,
     if(!message||Array.isArray(message)||message.jsonrpc!=='2.0'||typeof message.method!=='string') return json({jsonrpc:'2.0',id:message?.id??null,error:{code:-32600,message:'Invalid request'}});
     const {id,method,params={}}=message;
     if(id===undefined) return new Response(null,{status:202});
-    const modern=request.headers.get('mcp-protocol-version')==='2026-07-28'||method==='server/discover';
-    const reply=result=>json({jsonrpc:'2.0',id,result:modern?{...result,resultType:'complete'}:result});
+    const headerVersion=request.headers.get('mcp-protocol-version');
+    const bodyVersion=params?._meta?.['io.modelcontextprotocol/protocolVersion'];
+    // Preserve header-only compatibility while accepting per-request modern envelopes.
+    if(headerVersion!==null&&typeof bodyVersion==='string'&&headerVersion!==bodyVersion) {
+      return json({jsonrpc:'2.0',id,error:{code:-32020,message:'MCP-Protocol-Version header does not match the request envelope.'}},400);
+    }
+    const modern=headerVersion==='2026-07-28'||bodyVersion==='2026-07-28'||method==='server/discover';
+    const cacheableMethods=['server/discover','tools/list','prompts/list','resources/list','resources/templates/list','resources/read'];
+    const reply=result=>json({jsonrpc:'2.0',id,result:modern?{
+      ...result,resultType:'complete',
+      ...(cacheableMethods.includes(method)?{ttlMs:0,cacheScope:'private'}:{}),
+      _meta:{...result._meta,'io.modelcontextprotocol/serverInfo':{name:'inline-qa',version:VERSION}}
+    }:result});
     if(method==='server/discover') return reply({resultType:'complete',supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}},_meta:{'io.modelcontextprotocol/serverInfo':{name:'inline-qa',version:VERSION}}});
     if(method==='initialize') return reply({protocolVersion:params.protocolVersion||'2025-03-26',capabilities:{tools:{},resources:{}},serverInfo:{name:'inline-qa',version:VERSION},instructions:'Use create_board only when the user selects this plugin or asks for an interactive board. Follow-ups use the current ChatGPT model: get_card_request then submit_card_answer. Save the full explanation to its original card; only briefly acknowledge in main chat. Do not open or create another component for follow-ups.'});
     if(method==='ping') return reply({});
@@ -171,18 +183,19 @@ export function createMcpHandler(service,widgetHtml,{onResourceRead,uiCheckHtml,
     if(method==='resources/list') return reply({resources:[{uri:UI_URI,name:'互动答题板',mimeType:UI_MIME},{uri:UI_CHECK_URI,name:'题卡显示检测',mimeType:UI_MIME}]});
     if(method==='resources/templates/list') return reply({resourceTemplates:[]});
     if(method==='prompts/list') return reply({prompts:[]});
-    const resourceHtml=params.uri===UI_CHECK_URI?uiCheckHtml:widgetHtml;
-    if(method==='resources/read'&&[UI_URI,LEGACY_UI_URI,UI_CHECK_URI].includes(params.uri)&&typeof resourceHtml==='string') {
+    const isUiCheck=[UI_CHECK_URI,LEGACY_UI_CHECK_URI].includes(params.uri);
+    const resourceHtml=isUiCheck?uiCheckHtml:widgetHtml;
+    if(method==='resources/read'&&[UI_URI,LEGACY_UI_URI,UI_CHECK_URI,LEGACY_UI_CHECK_URI].includes(params.uri)&&typeof resourceHtml==='string') {
       if(typeof onResourceRead==='function') {
         const diagnostic={
-          event:'inline-qa.resource-read',templateUri:params.uri===UI_CHECK_URI?UI_CHECK_URI:UI_URI,requestedUri:params.uri,version:VERSION,
+          event:'inline-qa.resource-read',templateUri:isUiCheck?UI_CHECK_URI:UI_URI,requestedUri:params.uri,version:VERSION,
           mimeType:UI_MIME,htmlBytes:new TextEncoder().encode(resourceHtml).length,
           headerProtocolVersion:protocolVersionForLog(request.headers.get('mcp-protocol-version')),
           bodyProtocolVersion:protocolVersionForLog(params?._meta?.['io.modelcontextprotocol/protocolVersion'])
         };
         emitDiagnostic(onResourceRead,diagnostic);
       }
-      return reply({contents:[{uri:params.uri,mimeType:UI_MIME,text:resourceHtml,_meta:{'openai/ui':{availableDisplayModes:['inline','fullscreen']},ui:{prefersBorder:true,csp:{connectDomains:[],resourceDomains:[]}},'openai/widgetDescription':params.uri===UI_CHECK_URI?'独立题卡显示检测；仅检查页面加载与界面连接，不读取或修改已有题目。检测结果由当前客户端确认。':'题目卡片；使用当前 ChatGPT 解答追问，完整答案写回本题。主聊天可能显示处理记录。','openai/widgetPrefersBorder':true,'openai/widgetCSP':{connect_domains:[],resource_domains:[]}}}]});
+      return reply({contents:[{uri:params.uri,mimeType:UI_MIME,text:resourceHtml,_meta:{'openai/ui':{availableDisplayModes:['inline','fullscreen']},ui:{prefersBorder:true,csp:{connectDomains:[],resourceDomains:[]}},'openai/widgetDescription':isUiCheck?'独立题卡显示检测；仅检查页面加载与界面连接，不读取或修改已有题目。检测结果由当前客户端确认。':'题目卡片；使用当前 ChatGPT 解答追问，完整答案写回本题。主聊天可能显示处理记录。','openai/widgetPrefersBorder':true,'openai/widgetCSP':{connect_domains:[],resource_domains:[]}}}]});
     }
     if(method==='tools/call') {
       if(!owner) return json({error:'Authentication required'},401);
